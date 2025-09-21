@@ -31,8 +31,7 @@ build: ## Build the binary
 
 # Testing
 test: ## Run tests
-	@$(GOTEST) -v -race -coverprofile=coverage.out ./...
-	@$(GOCMD) tool cover -html=coverage.out -o coverage.html
+	@$(GOTEST) -v -race ./...
 
 # Code quality
 fmt: ## Format code and check formatting
@@ -72,5 +71,4 @@ docker-run: ## Run Docker container
 # Cleanup
 clean: ## Clean build artifacts
 	@rm -rf $(BUILD_DIR)
-	@rm -f coverage.out coverage.html
 	@rm -f *.db

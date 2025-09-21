@@ -9,7 +9,7 @@ A modern, minimalist URL shortener inspired by Google's internal golinks system.
 - **Recursive Aliases**: Keywords can point to other keywords
 - **Usage Analytics**: Track popular queries and usage patterns
 - **Clean Architecture**: Modular, testable, and maintainable codebase
-- **Observability**: Built-in OpenTelemetry tracing and metrics
+- **Modern UI**: HTMX-powered interface with Dieter Rams-inspired design
 - **Containerized**: Ready-to-deploy Docker container
 
 ## Quick Start
@@ -32,13 +32,16 @@ open http://localhost:8080/homepage/
 
 ```bash
 # Install dependencies
-go mod download
+make deps
 
 # Copy environment configuration
 cp env.example .env
 
 # Run the application
-go run cmd/server/main.go
+make run
+
+# Or run with hot reload (requires air)
+make dev
 
 # Access the application
 open http://localhost:8080/homepage/
@@ -80,8 +83,6 @@ go github myproject       # Search GitHub for "myproject"
 | `DATABASE_PATH` | `golinks.db` | SQLite database path |
 | `BASE_URL` | `http://localhost:8080` | Base URL for the service |
 | `ENVIRONMENT` | `development` | Environment (development/production) |
-| `SERVICE_NAME` | `golinks` | Service name for telemetry |
-| `SERVICE_VERSION` | `1.0.0` | Service version for telemetry |
 
 ### Creating Links
 
@@ -113,8 +114,7 @@ internal/
 ├── domain/          # Domain models and interfaces
 ├── handlers/        # HTTP handlers and routing
 ├── repository/      # Data access layer
-├── service/         # Business logic layer
-└── telemetry/       # Observability setup
+└── service/         # Business logic layer
 web/
 ├── static/          # CSS, images, and static assets
 └── templates/       # HTML templates
@@ -135,30 +135,6 @@ The UI follows Dieter Rams' principles of good design:
 - **Environmentally friendly**: Efficient, lightweight implementation
 - **Minimal**: Only essential elements, nothing superfluous
 
-## Observability
-
-### Tracing
-
-The application includes OpenTelemetry tracing:
-
-```bash
-# Start with Jaeger
-docker-compose --profile observability up -d
-
-# View traces at http://localhost:16686
-```
-
-### Metrics
-
-Prometheus metrics are available at `/metrics`:
-
-```bash
-# Start with Prometheus
-docker-compose --profile observability up -d
-
-# View metrics at http://localhost:9090
-```
-
 ## Development
 
 ### Project Structure
@@ -167,29 +143,34 @@ docker-compose --profile observability up -d
 - **Service Layer**: Use cases and business rules
 - **Repository Layer**: Data access and persistence
 - **Handler Layer**: HTTP transport and presentation
-- **Infrastructure**: Database, telemetry, and external services
+- **Infrastructure**: Database and external services
 
-### Testing
+### Development Commands
 
 ```bash
-# Run tests
-go test ./...
+# Format and check code
+make fmt
+
+# Fix formatting and linting issues
+make fix
+
+# Run linter
+make lint
 
 # Run tests with coverage
-go test -cover ./...
+make test
 
-# Run integration tests
-go test -tags=integration ./...
-```
-
-### Building
-
-```bash
 # Build binary
-go build -o golinks cmd/server/main.go
+make build
 
 # Build Docker image
-docker build -t golinks .
+make docker-build
+
+# Run all CI checks
+make ci
+
+# Clean build artifacts
+make clean
 ```
 
 ## Deployment
@@ -198,7 +179,11 @@ docker build -t golinks .
 
 ```bash
 # Production deployment
-docker-compose -f docker-compose.yml up -d
+docker-compose up -d
+
+# Or using make commands
+make docker-build
+make docker-run
 ```
 
 ### Environment Variables for Production

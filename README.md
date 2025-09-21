@@ -203,10 +203,6 @@ export ENVIRONMENT=production
 4. Add tests
 5. Submit a pull request
 
-## License
-
-MIT License - see LICENSE file for details.
-
 ## Acknowledgments
 
 - Inspired by Google's internal golinks system

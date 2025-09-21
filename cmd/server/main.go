@@ -44,13 +44,16 @@ func main() {
 
 	// Initialize services
 	linkService := service.NewLinkService(shortcutRepo, queryRepo)
+	docService := service.NewDocumentService("docs")
 
 	// Initialize handlers
 	handler := handlers.NewHandler(linkService, cfg)
+	docHandler := handlers.NewDocumentHandler(docService)
 
 	// Setup router
 	router := mux.NewRouter()
 	handler.RegisterRoutes(router)
+	docHandler.RegisterRoutes(router)
 
 	// Setup server
 	server := &http.Server{

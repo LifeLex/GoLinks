@@ -1,0 +1,10 @@
+- [ ] Support Postgres as a DB not just SQLite
+- [ ] Add authentication and login, whether propietary or integration with 3rd parties
+- [ ] Add authorization, different users can have different roles
+- [ ] Support for theme customization
+- [ ] Support for user administration
+- [ ] Add golang migrations
+- [ ] Consider the use of an ORM
+- [ ] Statistics of most accessed docs
+- [ ] Support to render Markdown docs and MDX docs
+- [ ] Deployment in google app engine

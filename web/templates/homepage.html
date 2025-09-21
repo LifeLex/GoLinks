@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>golinks</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+    <h1>go<span class="accent">links</span></h1>
+    
+    {{if .Missing}}
+        <div id="failure" class="status-message">
+            <span>⚠️</span>
+            <div>Unable to find a shortcut for the query <code>{{.Missing}}</code></div>
+        </div>
+    {{else if .Success}}
+        <div id="success" class="status-message">
+            <span>✅</span>
+            <div>Added keyword <code>{{.Success}}</code></div>
+        </div>
+    {{else if .Failure}}
+        <div id="failure" class="status-message">
+            <span>❌</span>
+            <div>Adding keyword <code>{{.Failure}}</code> failed: {{.Reason}}</div>
+        </div>
+    {{end}}
+
+    <div class="constrained-width">
+        <p>
+            If you're not yet setup with GoLinks then you should follow the guide 
+            <a href="{{.BaseURL}}/setup/">here</a>.
+        </p>
+        <p>
+            Your search engine should now read: <code>{{.BaseURL}}/query/%s</code>
+        </p>
+
+        <h2>➕ Add new keyword</h2>
+        <form id="linkForm" 
+              hx-post="{{.BaseURL}}/update/" 
+              hx-trigger="submit"
+              hx-target="#form-result"
+              hx-swap="innerHTML">
+            <div id="formData">
+                <input type="text" name="word" placeholder="Keyword" required>
+                <input type="text" name="link" placeholder="URL" required>
+                <input type="submit" value="Add Link">
+            </div>
+        </form>
+        
+        <div id="form-result" class="fade-in"></div>
+
+        {{if .RecentQueries}}
+        <h2>🔥 Popular queries</h2>
+        <table id="recent-queries">
+            <thead>
+                <tr>
+                    <th>Count</th>
+                    <th>Keyword</th>
+                    <th>URL</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .RecentQueries}}
+                <tr>
+                    <td>{{.Count}}</td>
+                    <td><code>{{.Word}}</code></td>
+                    <td class="url">{{urlify .Link}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{end}}
+
+        {{if .AllKeywords}}
+        <h2>🔎 Full keyword list</h2>
+        <p class="text-muted">
+            If you're needing inspiration, here are the current listed keywords. 
+            Use <code>{*}</code> in a URL for variable links and space separated queries, 
+            like <code>go google cats</code>.
+        </p>
+        <table id="all-keywords">
+            <thead>
+                <tr>
+                    <th>Keyword</th>
+                    <th>Aliases</th>
+                    <th>URL</th>
+                    <th>Created On</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .AllKeywords}}
+                <tr>
+                    <td><code>{{.Word}}</code></td>
+                    <td>{{if .Aliases}}<code>{{.Aliases}}</code>{{else}}-{{end}}</td>
+                    <td class="url">{{urlify .Link}}</td>
+                    <td>{{.CreatedAt.Format "2006-01-02"}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{end}}
+    </div>
+
+    <script>
+        // Enhanced form handling with HTMX
+        document.getElementById('linkForm').addEventListener('htmx:afterRequest', function(event) {
+            const form = event.target;
+            const result = document.getElementById('form-result');
+            
+            if (event.detail.successful) {
+                // Success - redirect to show success message
+                const word = form.querySelector('input[name="word"]').value;
+                window.location.href = window.location.pathname + "?success=" + encodeURIComponent(word);
+            } else {
+                // Error - show error message
+                try {
+                    const errorData = JSON.parse(event.detail.xhr.responseText);
+                    const word = form.querySelector('input[name="word"]').value;
+                    window.location.href = window.location.pathname + "?failure=" + encodeURIComponent(word) + "&reason=" + encodeURIComponent(errorData.detail);
+                } catch (e) {
+                    result.innerHTML = '<div class="status-message" style="background-color: rgba(220, 38, 38, 0.1); color: var(--rams-red); border: 1px solid rgba(220, 38, 38, 0.2);">An error occurred. Please try again.</div>';
+                }
+            }
+        });
+
+        // Form validation
+        document.getElementById('linkForm').addEventListener('submit', function(event) {
+            const word = this.querySelector('input[name="word"]').value.trim();
+            const link = this.querySelector('input[name="link"]').value.trim();
+            
+            if (!word) {
+                event.preventDefault();
+                document.getElementById('form-result').innerHTML = '<div class="status-message" style="background-color: rgba(220, 38, 38, 0.1); color: var(--rams-red); border: 1px solid rgba(220, 38, 38, 0.2);">Please enter a keyword.</div>';
+                return;
+            }
+            
+            if (!link) {
+                event.preventDefault();
+                document.getElementById('form-result').innerHTML = '<div class="status-message" style="background-color: rgba(220, 38, 38, 0.1); color: var(--rams-red); border: 1px solid rgba(220, 38, 38, 0.2);">Please enter a URL.</div>';
+                return;
+            }
+            
+            if (word.endsWith('/')) {
+                event.preventDefault();
+                document.getElementById('form-result').innerHTML = '<div class="status-message" style="background-color: rgba(220, 38, 38, 0.1); color: var(--rams-red); border: 1px solid rgba(220, 38, 38, 0.2);">Keywords ending in \'/\' are not supported.</div>';
+                return;
+            }
+        });
+
+        // Auto-hide status messages after 5 seconds
+        setTimeout(function() {
+            const statusMessages = document.querySelectorAll('#success, #failure');
+            statusMessages.forEach(function(msg) {
+                msg.style.transition = 'opacity 0.5s ease';
+                msg.style.opacity = '0';
+                setTimeout(function() {
+                    msg.style.display = 'none';
+                }, 500);
+            });
+        }, 5000);
+    </script>
+</body>
+</html>

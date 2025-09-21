@@ -1,0 +1,38 @@
+run:
+  timeout: 5m
+  tests: true
+
+issues:
+  exclude-dirs:
+    - vendor
+    - tmp
+    - build
+
+linters-settings:
+  gofmt:
+    simplify: true
+  
+  goimports:
+    local-prefixes: golinks
+  
+  lll:
+    line-length: 140
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - lll
+
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - lll

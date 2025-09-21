@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>golinks - Setup</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <h1>go<span class="accent">links</span> Setup</h1>
+
+    <div class="constrained-width">
+        <h2>🔧 Browser Setup</h2>
+        <p>
+            To use GoLinks, you need to configure your browser to use our service as a search engine.
+            This allows you to type <code>go keyword</code> in your address bar and be redirected to the corresponding URL.
+        </p>
+
+        <h3>Chrome / Edge Setup</h3>
+        <ol>
+            <li>Open Chrome/Edge Settings</li>
+            <li>Go to <strong>Search engine</strong> → <strong>Manage search engines and site search</strong></li>
+            <li>Click <strong>Add</strong> next to "Site search"</li>
+            <li>Fill in the form:
+                <ul>
+                    <li><strong>Search engine:</strong> GoLinks</li>
+                    <li><strong>Shortcut:</strong> <code>go</code></li>
+                    <li><strong>URL with %s in place of query:</strong> <code>{{.BaseURL}}/query/%s</code></li>
+                </ul>
+            </li>
+            <li>Click <strong>Add</strong></li>
+        </ol>
+
+        <h3>Firefox Setup</h3>
+        <ol>
+            <li>Right-click in the address bar and select <strong>Add a Keyword for this Search</strong></li>
+            <li>Or go to Bookmarks → Manage Bookmarks</li>
+            <li>Right-click and select <strong>New Bookmark</strong></li>
+            <li>Fill in:
+                <ul>
+                    <li><strong>Name:</strong> GoLinks</li>
+                    <li><strong>Location:</strong> <code>{{.BaseURL}}/query/%s</code></li>
+                    <li><strong>Keyword:</strong> <code>go</code></li>
+                </ul>
+            </li>
+            <li>Click <strong>Save</strong></li>
+        </ol>
+
+        <h3>Safari Setup</h3>
+        <ol>
+            <li>Safari doesn't support custom search engines directly</li>
+            <li>You can bookmark <code>{{.BaseURL}}/homepage/</code> for easy access</li>
+            <li>Or use a browser extension like <strong>Keyword Search</strong></li>
+        </ol>
+
+        <div class="status-message" style="background-color: rgba(5, 150, 105, 0.1); color: var(--rams-green); border: 1px solid rgba(5, 150, 105, 0.2); margin: var(--space-xl) 0;">
+            <span>💡</span>
+            <div>
+                <strong>Pro Tip:</strong> After setup, you can type <code>go keyword</code> in your address bar 
+                to quickly navigate to any configured link!
+            </div>
+        </div>
+
+        <h2>🚀 Usage Examples</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Command</th>
+                    <th>Description</th>
+                    <th>Example</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>go docs</code></td>
+                    <td>Navigate to documentation</td>
+                    <td>If "docs" points to https://docs.company.com</td>
+                </tr>
+                <tr>
+                    <td><code>go jira 123</code></td>
+                    <td>Navigate with parameters</td>
+                    <td>If "jira" contains <code>{*}</code> placeholder</td>
+                </tr>
+                <tr>
+                    <td><code>go github myrepo</code></td>
+                    <td>Search within a service</td>
+                    <td>Dynamic search using <code>{*}</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>📝 Creating Links</h2>
+        <p>
+            Once setup is complete, visit the <a href="{{.BaseURL}}/homepage/">homepage</a> to:
+        </p>
+        <ul>
+            <li>Create new keyword shortcuts</li>
+            <li>View popular and recent queries</li>
+            <li>Browse all available keywords</li>
+            <li>Use <code>{*}</code> in URLs for dynamic content</li>
+        </ul>
+
+        <div class="text-center" style="margin: var(--space-2xl) 0;">
+            <a href="{{.BaseURL}}/homepage/" 
+               style="display: inline-block; background: linear-gradient(135deg, var(--rams-blue) 0%, var(--rams-orange) 100%); color: var(--rams-white); padding: var(--space-md) var(--space-xl); border-radius: var(--radius-md); font-weight: 500; text-decoration: none; transition: transform 0.15s ease, box-shadow 0.15s ease;">
+                Go to Homepage
+            </a>
+        </div>
+    </div>
+
+    <style>
+        ol, ul {
+            margin: var(--space-md) 0;
+            padding-left: var(--space-xl);
+        }
+
+        li {
+            margin: var(--space-sm) 0;
+            line-height: 1.6;
+        }
+
+        li ul, li ol {
+            margin: var(--space-sm) 0;
+        }
+
+        strong {
+            font-weight: 600;
+            color: var(--rams-charcoal);
+        }
+
+        a[href$="/homepage/"]:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+    </style>
+</body>
+</html>

@@ -5,10 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>golinks - Setup</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=2">
 </head>
 <body>
-    <h1>go<span class="accent">links</span> Setup</h1>
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="navbar-brand">
+                <h1>go<span class="accent">links</span></h1>
+            </div>
+            <div class="navbar-nav">
+                <a href="{{.BaseURL}}/homepage/" class="nav-link">Home</a>
+                <a href="{{.BaseURL}}/setup/" class="nav-link active">Setup</a>
+            </div>
+        </div>
+    </nav>
 
     <div class="constrained-width">
         <h2>🔧 Browser Setup</h2>

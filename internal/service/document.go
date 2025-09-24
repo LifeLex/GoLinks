@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golinks/internal/logger"
+
 	"github.com/yuin/goldmark"
 	meta "github.com/yuin/goldmark-meta"
 	"github.com/yuin/goldmark/extension"
@@ -20,6 +22,7 @@ import (
 type DocumentService struct {
 	docsPath string
 	markdown goldmark.Markdown
+	logger   *logger.Logger
 }
 
 // DocumentInfo contains metadata about a document
@@ -38,7 +41,9 @@ type RenderResult struct {
 }
 
 // NewDocumentService creates a new document service
-func NewDocumentService(docsPath string) *DocumentService {
+func NewDocumentService(docsPath string, log *logger.Logger) *DocumentService {
+	log.Info("Initializing document service: %s", docsPath)
+
 	// Configure Goldmark with extensions
 	md := goldmark.New(
 		goldmark.WithExtensions(
@@ -58,9 +63,12 @@ func NewDocumentService(docsPath string) *DocumentService {
 		),
 	)
 
+	log.Info("Document service initialized successfully")
+
 	return &DocumentService{
 		docsPath: docsPath,
 		markdown: md,
+		logger:   log,
 	}
 }
 

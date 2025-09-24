@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"golinks/internal/domain"
+	"golinks/internal/logger"
 )
 
 func TestQueryRepository_Create(t *testing.T) {
@@ -12,7 +13,8 @@ func TestQueryRepository_Create(t *testing.T) {
 	defer db.Close()
 
 	// First create a shortcut to reference
-	shortcutRepo := NewShortcutRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	shortcutRepo := NewShortcutRepository(db, mockLogger)
 	shortcut := &domain.Shortcut{
 		Word: "test",
 		Link: "https://test.com",
@@ -23,7 +25,7 @@ func TestQueryRepository_Create(t *testing.T) {
 		t.Fatalf("Failed to create test shortcut: %v", err)
 	}
 
-	queryRepo := NewQueryRepository(db)
+	queryRepo := NewQueryRepository(db, mockLogger)
 
 	tests := []struct {
 		name    string
@@ -58,8 +60,9 @@ func TestQueryRepository_GetRecentQueries(t *testing.T) {
 	defer db.Close()
 
 	// Setup test data
-	shortcutRepo := NewShortcutRepository(db)
-	queryRepo := NewQueryRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	shortcutRepo := NewShortcutRepository(db, mockLogger)
+	queryRepo := NewQueryRepository(db, mockLogger)
 
 	// Create shortcuts
 	shortcuts := []*domain.Shortcut{
@@ -182,8 +185,9 @@ func TestQueryRepository_GetRecentQueries_TimeWindow(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	shortcutRepo := NewShortcutRepository(db)
-	queryRepo := NewQueryRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	shortcutRepo := NewShortcutRepository(db, mockLogger)
+	queryRepo := NewQueryRepository(db, mockLogger)
 
 	// Create a shortcut
 	shortcut := &domain.Shortcut{
@@ -242,7 +246,8 @@ func TestQueryRepository_DatabaseError(t *testing.T) {
 	db := setupTestDB(t)
 	db.Close() // Close immediately to cause errors
 
-	repo := NewQueryRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	repo := NewQueryRepository(db, mockLogger)
 
 	// Test Create with closed DB
 	err := repo.Create(context.Background(), 1)
@@ -261,7 +266,8 @@ func TestQueryRepository_EmptyResults(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	repo := NewQueryRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	repo := NewQueryRepository(db, mockLogger)
 
 	// Test GetRecentQueries with no data
 	queries, err := repo.GetRecentQueries(context.Background(), 1, 10)

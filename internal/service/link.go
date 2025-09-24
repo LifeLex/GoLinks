@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"golinks/internal/domain"
+	"golinks/internal/logger"
 )
 
 // ShortcutRepository interface for shortcut operations
@@ -27,13 +28,16 @@ type QueryRepository interface {
 type LinkService struct {
 	shortcutRepo ShortcutRepository
 	queryRepo    QueryRepository
+	logger       *logger.Logger
 }
 
 // NewLinkService creates a new link service
-func NewLinkService(shortcutRepo ShortcutRepository, queryRepo QueryRepository) *LinkService {
+func NewLinkService(shortcutRepo ShortcutRepository, queryRepo QueryRepository, log *logger.Logger) *LinkService {
+	log.Info("Link service initialized")
 	return &LinkService{
 		shortcutRepo: shortcutRepo,
 		queryRepo:    queryRepo,
+		logger:       log,
 	}
 }
 
@@ -48,11 +52,12 @@ func (e InvalidQueryError) Error() string {
 
 // GetLink resolves a golink query to a URL
 func (s *LinkService) GetLink(ctx context.Context, word string, searchTerm string) (string, error) {
-
 	word = strings.TrimSpace(word)
+	s.logger.Debug("Processing golink query: '%s' (search: '%s')", word, searchTerm)
 
 	shortcut, err := s.shortcutRepo.GetByWord(ctx, word)
 	if err != nil {
+		s.logger.Error("Failed to get shortcut from repository: %v", err)
 		return "", fmt.Errorf("failed to get shortcut: %w", err)
 	}
 
@@ -60,48 +65,59 @@ func (s *LinkService) GetLink(ctx context.Context, word string, searchTerm strin
 		// Try splitting the word if it contains spaces
 		if strings.Contains(word, " ") {
 			newWord, newSearchTerm := moveLastWord(word, searchTerm)
+			s.logger.Debug("Splitting word '%s' -> '%s' and retrying", word, newWord)
 			return s.GetLink(ctx, newWord, newSearchTerm)
 		}
 
+		query := strings.Join([]string{word, searchTerm}, " ")
+		s.logger.Warn("No shortcut found for query: %s", query)
 		return "", InvalidQueryError{
-			Message: fmt.Sprintf("Unable to find link for query %s", strings.Join([]string{word, searchTerm}, " ")),
+			Message: fmt.Sprintf("Unable to find link for query %s", query),
 		}
 	}
 
+	s.logger.Info("Found shortcut: id=%d link='%s' user='%s'", shortcut.ID, shortcut.Link, shortcut.User)
+
 	// Log the query
 	if err := s.queryRepo.Create(ctx, shortcut.ID); err != nil {
-		// Log error but don't fail the request
-		// In a production system, you might want to log this error
-		_ = err
+		s.logger.Error("Failed to log query usage for shortcut %d: %v", shortcut.ID, err)
+		// Don't fail the request for logging errors
 	}
 
 	// Handle different types of links
 	if !isURL(shortcut.Link) {
+		s.logger.Debug("Link is an alias '%s', recursing", shortcut.Link)
 		// This is an alias, recurse
 		return s.GetLink(ctx, shortcut.Link, searchTerm)
 	}
 
 	// Process URL with search term substitution
 	resultLink := processResultLink(shortcut.Link, searchTerm)
+	s.logger.Info("Link resolution successful: '%s' -> '%s'", word, resultLink)
 	return resultLink, nil
 }
 
 // UpdateLink creates or updates a golink
 func (s *LinkService) UpdateLink(ctx context.Context, req domain.LinkRequest, userID string) error {
+	s.logger.Info("Processing link update: word='%s' link='%s' user='%s'", req.Word, req.Link, userID)
 
 	// Validate the request
 	if err := s.validateLinkRequest(ctx, req); err != nil {
+		s.logger.Warn("Link request validation failed: %v", err)
 		return err
 	}
 
 	// If the link is not a URL, validate it's a valid alias
 	if !isURL(req.Link) {
+		s.logger.Debug("Validating alias link: %s", req.Link)
 		_, err := s.GetLink(ctx, req.Link, "")
 		if err != nil {
+			s.logger.Error("Invalid alias link '%s': %v", req.Link, err)
 			return InvalidQueryError{
 				Message: "The link target appears to neither be a URL, or a valid alias.",
 			}
 		}
+		s.logger.Debug("Alias validation successful: %s", req.Link)
 	}
 
 	shortcut := &domain.Shortcut{
@@ -112,23 +128,39 @@ func (s *LinkService) UpdateLink(ctx context.Context, req domain.LinkRequest, us
 	}
 
 	if err := s.shortcutRepo.Create(ctx, shortcut); err != nil {
+		s.logger.Error("Failed to create shortcut in repository: %v", err)
 		return fmt.Errorf("failed to create shortcut: %w", err)
 	}
 
+	s.logger.Info("Link update completed successfully: id=%d", shortcut.ID)
 	return nil
 }
 
 // GetRecentQueries retrieves popular queries
 func (s *LinkService) GetRecentQueries(ctx context.Context) ([]domain.PopularQuery, error) {
-	return s.queryRepo.GetRecentQueries(ctx, 3, 20)
+	s.logger.Debug("Fetching recent queries (3 days, max 20 results)")
+
+	queries, err := s.queryRepo.GetRecentQueries(ctx, 3, 20)
+	if err != nil {
+		s.logger.Error("Failed to get recent queries: %v", err)
+		return nil, err
+	}
+
+	s.logger.Debug("Recent queries retrieved successfully: %d queries", len(queries))
+	return queries, nil
 }
 
 // GetAllKeywords retrieves all keywords with aliases
 func (s *LinkService) GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo, error) {
+	s.logger.Debug("Fetching all keywords")
+
 	keywords, err := s.shortcutRepo.GetAllKeywords(ctx)
 	if err != nil {
+		s.logger.Error("Failed to get all keywords: %v", err)
 		return nil, err
 	}
+
+	s.logger.Debug("Processing keywords for aliases: %d total keywords", len(keywords))
 
 	// Process aliases (simplified version - not implementing full recursive alias resolution for now)
 	for i := range keywords {
@@ -145,6 +177,7 @@ func (s *LinkService) GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo,
 		}
 	}
 
+	s.logger.Debug("Keywords retrieved and processed successfully: %d total, %d URLs", len(keywords), len(result))
 	return result, nil
 }
 

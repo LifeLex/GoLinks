@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golinks/internal/logger"
 	"golinks/internal/service"
 
 	"github.com/gorilla/mux"
@@ -16,12 +17,15 @@ import (
 // DocumentHandler handles document-related HTTP requests
 type DocumentHandler struct {
 	docService *service.DocumentService
+	logger     *logger.Logger
 }
 
 // NewDocumentHandler creates a new document handler
-func NewDocumentHandler(docService *service.DocumentService) *DocumentHandler {
+func NewDocumentHandler(docService *service.DocumentService, log *logger.Logger) *DocumentHandler {
+	log.Info("Document handler initialized")
 	return &DocumentHandler{
 		docService: docService,
+		logger:     log,
 	}
 }
 

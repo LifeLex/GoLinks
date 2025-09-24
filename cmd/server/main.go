@@ -13,6 +13,7 @@ import (
 	"golinks/internal/config"
 	"golinks/internal/database"
 	"golinks/internal/handlers"
+	"golinks/internal/logger"
 	"golinks/internal/repository"
 	"golinks/internal/service"
 
@@ -26,32 +27,48 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// Initialize simple logging
+	logger.Initialize(cfg.Logging)
+	appLogger := logger.Default()
+
+	appLogger.Info("Starting GoLinks application on port %d (env: %s)", cfg.Port, cfg.Environment)
+
 	// Initialize database
+	appLogger.Info("Initializing database: %s", cfg.DatabasePath)
 	db, err := database.NewSQLiteDB(cfg.DatabasePath)
 	if err != nil {
+		appLogger.Error("Failed to initialize database: %v", err)
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
 
 	// Run migrations
+	appLogger.Info("Running database migrations")
 	if err := database.Migrate(db); err != nil {
+		appLogger.Error("Failed to run migrations: %v", err)
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
+	appLogger.Info("Database migrations completed successfully")
 
 	// Initialize repositories
-	shortcutRepo := repository.NewShortcutRepository(db)
-	queryRepo := repository.NewQueryRepository(db)
+	appLogger.Info("Initializing repositories")
+	shortcutRepo := repository.NewShortcutRepository(db, appLogger)
+	queryRepo := repository.NewQueryRepository(db, appLogger)
 
 	// Initialize services
-	linkService := service.NewLinkService(shortcutRepo, queryRepo)
-	docService := service.NewDocumentService("docs")
+	appLogger.Info("Initializing services")
+	linkService := service.NewLinkService(shortcutRepo, queryRepo, appLogger)
+	docService := service.NewDocumentService("docs", appLogger)
 
 	// Initialize handlers
-	handler := handlers.NewHandler(linkService, cfg)
-	docHandler := handlers.NewDocumentHandler(docService)
+	appLogger.Info("Initializing handlers")
+	handler := handlers.NewHandler(linkService, cfg, appLogger)
+	docHandler := handlers.NewDocumentHandler(docService, appLogger)
 
 	// Setup router
+	appLogger.Info("Setting up HTTP router")
 	router := mux.NewRouter()
+
 	handler.RegisterRoutes(router)
 	docHandler.RegisterRoutes(router)
 
@@ -66,8 +83,9 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		log.Printf("Starting server on port %d", cfg.Port)
+		appLogger.Info("Starting HTTP server on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			appLogger.Error("Server failed to start: %v", err)
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
@@ -76,15 +94,17 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down server...")
+	appLogger.Info("Received shutdown signal, initiating graceful shutdown")
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	appLogger.Info("Shutting down HTTP server (timeout: 30s)")
 	if err := server.Shutdown(ctx); err != nil {
+		appLogger.Error("Server forced to shutdown: %v", err)
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
-	log.Println("Server exited")
+	appLogger.Info("Server shutdown completed successfully")
 }

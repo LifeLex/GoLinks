@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"golinks/internal/domain"
+	"golinks/internal/logger"
 )
 
 // Mock repositories for testing
@@ -158,7 +159,8 @@ func TestLinkService_GetLink(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			shortcutRepo := &mockShortcutRepository{shortcuts: tt.shortcuts}
 			queryRepo := &mockQueryRepository{}
-			service := NewLinkService(shortcutRepo, queryRepo)
+			mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+			service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
 
 			got, err := service.GetLink(context.Background(), tt.word, tt.searchTerm)
 
@@ -255,7 +257,8 @@ func TestLinkService_UpdateLink(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			shortcutRepo := &mockShortcutRepository{shortcuts: tt.shortcuts}
 			queryRepo := &mockQueryRepository{}
-			service := NewLinkService(shortcutRepo, queryRepo)
+			mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+			service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
 
 			err := service.UpdateLink(context.Background(), tt.request, tt.userID)
 
@@ -269,7 +272,8 @@ func TestLinkService_UpdateLink(t *testing.T) {
 func TestLinkService_GetRecentQueries(t *testing.T) {
 	shortcutRepo := &mockShortcutRepository{shortcuts: map[string]*domain.Shortcut{}}
 	queryRepo := &mockQueryRepository{}
-	service := NewLinkService(shortcutRepo, queryRepo)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
 
 	queries, err := service.GetRecentQueries(context.Background())
 
@@ -307,7 +311,8 @@ func TestLinkService_GetAllKeywords(t *testing.T) {
 
 	shortcutRepo := &mockShortcutRepository{shortcuts: shortcuts}
 	queryRepo := &mockQueryRepository{}
-	service := NewLinkService(shortcutRepo, queryRepo)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
 
 	keywords, err := service.GetAllKeywords(context.Background())
 

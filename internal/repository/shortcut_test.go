@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"golinks/internal/domain"
+	"golinks/internal/logger"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -49,7 +50,8 @@ func TestShortcutRepository_GetByWord(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	repo := NewShortcutRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	repo := NewShortcutRepository(db, mockLogger)
 
 	// Insert test data
 	testShortcut := &domain.Shortcut{
@@ -126,7 +128,8 @@ func TestShortcutRepository_Create(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	repo := NewShortcutRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	repo := NewShortcutRepository(db, mockLogger)
 
 	tests := []struct {
 		name     string
@@ -194,7 +197,8 @@ func TestShortcutRepository_GetAllKeywords(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	repo := NewShortcutRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	repo := NewShortcutRepository(db, mockLogger)
 
 	// Insert test data
 	testShortcuts := []*domain.Shortcut{
@@ -244,7 +248,8 @@ func TestShortcutRepository_GetByWord_MostRecent(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	repo := NewShortcutRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	repo := NewShortcutRepository(db, mockLogger)
 
 	// Create multiple versions of the same word
 	shortcuts := []*domain.Shortcut{
@@ -289,7 +294,8 @@ func TestShortcutRepository_DatabaseError(t *testing.T) {
 	db := setupTestDB(t)
 	db.Close() // Close immediately to cause errors
 
-	repo := NewShortcutRepository(db)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	repo := NewShortcutRepository(db, mockLogger)
 
 	// Test GetByWord with closed DB
 	_, err := repo.GetByWord(context.Background(), "test")

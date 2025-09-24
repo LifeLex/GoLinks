@@ -5,11 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>golinks</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=2">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 </head>
 <body>
-    <h1>go<span class="accent">links</span></h1>
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="navbar-brand">
+                <h1>go<span class="accent">links</span></h1>
+            </div>
+            <div class="navbar-nav">
+                <a href="{{.BaseURL}}/homepage/" class="nav-link active">Home</a>
+                <a href="{{.BaseURL}}/setup/" class="nav-link">Setup</a>
+            </div>
+        </div>
+    </nav>
     
     {{if .Missing}}
         <div id="failure" class="status-message">

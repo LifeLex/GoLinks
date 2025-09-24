@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 - Page Not Found | GoLinks</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/styles.css?v=3">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-container">
+            <div class="navbar-brand">
+                <h1>go<span class="accent">links</span></h1>
+            </div>
+            <div class="navbar-nav">
+                <a href="{{.BaseURL}}/homepage/" class="nav-link">Home</a>
+                <a href="{{.BaseURL}}/setup/" class="nav-link">Setup</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="error-page">
+        <div class="error-content">
+            <div class="error-icon">
+                <span>404</span>
+            </div>
+            <h2>Page Not Found</h2>
+            <p class="error-description">
+                The page you are looking for (<code>{{.Path}}</code>) does not exist.
+                It might have been moved, deleted, or you entered the wrong URL.
+            </p>
+            
+            <div class="error-actions">
+                <a href="{{.BaseURL}}/homepage/" class="primary-action">
+                    <span>🏠</span>
+                    Go to Homepage
+                </a>
+                <a href="{{.BaseURL}}/setup/" class="secondary-action">
+                    <span>🔧</span>
+                    Setup Guide
+                </a>
+            </div>
+            
+            <div class="error-help">
+                <p>Need help? Here are some suggestions:</p>
+                <ul>
+                    <li>Check the URL for typos</li>
+                    <li>Go back to the <a href="{{.BaseURL}}/homepage/">homepage</a></li>
+                    <li>Set up GoLinks with our <a href="{{.BaseURL}}/setup/">setup guide</a></li>
+                </ul>
+            </div>
+        </div>
+    </main>
+</body>
+</html>

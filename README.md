@@ -6,7 +6,6 @@ A modern, minimalist URL shortener inspired by Google's internal golinks system.
 
 - **Simple URL Shortening**: Create memorable shortcuts for long URLs
 - **Variable Substitution**: Use `{*}` placeholders for dynamic content
-- **Recursive Aliases**: Keywords can point to other keywords
 - **Usage Analytics**: Track popular queries and usage patterns
 - **Clean Architecture**: Modular, testable, and maintainable codebase
 - **Modern UI**: HTMX-powered interface with Dieter Rams-inspired design

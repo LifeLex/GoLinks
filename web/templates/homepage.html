@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>golinks</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-    <link rel="stylesheet" href="/static/styles.css?v=2">
+    <link rel="stylesheet" href="/static/styles.css?v=5">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 </head>
 <body>
@@ -62,27 +62,6 @@
         
         <div id="form-result" class="fade-in"></div>
 
-        {{if .RecentQueries}}
-        <h2>🔥 Popular queries</h2>
-        <table id="recent-queries">
-            <thead>
-                <tr>
-                    <th>Count</th>
-                    <th>Keyword</th>
-                    <th>URL</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .RecentQueries}}
-                <tr>
-                    <td>{{.Count}}</td>
-                    <td><code>{{.Word}}</code></td>
-                    <td class="url">{{urlify .Link}}</td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
-        {{end}}
 
         {{if .AllKeywords}}
         <h2>🔎 Full keyword list</h2>
@@ -95,7 +74,6 @@
             <thead>
                 <tr>
                     <th>Keyword</th>
-                    <th>Aliases</th>
                     <th>URL</th>
                     <th>Created On</th>
                 </tr>
@@ -104,7 +82,6 @@
                 {{range .AllKeywords}}
                 <tr>
                     <td><code>{{.Word}}</code></td>
-                    <td>{{if .Aliases}}<code>{{.Aliases}}</code>{{else}}-{{end}}</td>
                     <td class="url">{{urlify .Link}}</td>
                     <td>{{.CreatedAt.Format "2006-01-02"}}</td>
                 </tr>
@@ -115,7 +92,7 @@
     </div>
 
     <script>
-        // Enhanced form handling with HTMX
+        // Form handling with HTMX
         document.getElementById('linkForm').addEventListener('htmx:afterRequest', function(event) {
             const form = event.target;
             const result = document.getElementById('form-result');
@@ -125,40 +102,44 @@
                 const word = form.querySelector('input[name="word"]').value;
                 window.location.href = window.location.pathname + "?success=" + encodeURIComponent(word);
             } else {
-                // Error - show error message
-                try {
-                    const errorData = JSON.parse(event.detail.xhr.responseText);
-                    const word = form.querySelector('input[name="word"]').value;
-                    window.location.href = window.location.pathname + "?failure=" + encodeURIComponent(word) + "&reason=" + encodeURIComponent(errorData.detail);
-                } catch (e) {
-                    result.innerHTML = '<div class="status-message" style="background-color: rgba(220, 38, 38, 0.1); color: var(--rams-red); border: 1px solid rgba(220, 38, 38, 0.2);">An error occurred. Please try again.</div>';
-                }
+                // Error - show specific error message from server
+                const errorText = event.detail.xhr.responseText || 'An error occurred. Please try again.';
+                showErrorMessage(errorText);
             }
         });
 
-        // Form validation
+        // Form validation - basic checks only
         document.getElementById('linkForm').addEventListener('submit', function(event) {
             const word = this.querySelector('input[name="word"]').value.trim();
             const link = this.querySelector('input[name="link"]').value.trim();
             
+            // Clear any previous error messages
+            document.getElementById('form-result').innerHTML = '';
+            
+            // Only check for empty fields - let server handle URL validation
             if (!word) {
                 event.preventDefault();
-                document.getElementById('form-result').innerHTML = '<div class="status-message" style="background-color: rgba(220, 38, 38, 0.1); color: var(--rams-red); border: 1px solid rgba(220, 38, 38, 0.2);">Please enter a keyword.</div>';
+                showErrorMessage('Please enter a keyword.');
                 return;
             }
             
             if (!link) {
                 event.preventDefault();
-                document.getElementById('form-result').innerHTML = '<div class="status-message" style="background-color: rgba(220, 38, 38, 0.1); color: var(--rams-red); border: 1px solid rgba(220, 38, 38, 0.2);">Please enter a URL.</div>';
+                showErrorMessage('Please enter a URL.');
                 return;
             }
             
             if (word.endsWith('/')) {
                 event.preventDefault();
-                document.getElementById('form-result').innerHTML = '<div class="status-message" style="background-color: rgba(220, 38, 38, 0.1); color: var(--rams-red); border: 1px solid rgba(220, 38, 38, 0.2);">Keywords ending in \'/\' are not supported.</div>';
+                showErrorMessage('Keywords ending in \'/\' are not supported.');
                 return;
             }
         });
+        
+        // Helper function to show error messages
+        function showErrorMessage(message) {
+            document.getElementById('form-result').innerHTML = '<div class="error-message">' + message + '</div>';
+        }
 
         // Auto-hide status messages after 5 seconds
         setTimeout(function() {

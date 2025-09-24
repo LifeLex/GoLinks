@@ -8,3 +8,5 @@
 - [ ] Statistics of most accessed docs
 - [ ] Support to render Markdown docs and MDX docs
 - [ ] Deployment in google app engine
+- [ ] Add admin panel to manage golinks
+- [ ] Add the ability to create a request to an admin for a keyword to be added

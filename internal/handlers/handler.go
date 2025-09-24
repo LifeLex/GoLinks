@@ -144,7 +144,11 @@ func (h *Handler) UpdateLinkHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Return success message for HTMX
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("Link added successfully!"))
+	if _, err := w.Write([]byte("Link added successfully!")); err != nil {
+		h.logger.Error("Failed to write response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 }
 
 // HomepageHandler handles the homepage

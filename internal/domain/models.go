@@ -40,10 +40,9 @@ type PopularQuery struct {
 	Link  string `json:"link"`
 }
 
-// KeywordInfo represents keyword information with aliases
+// KeywordInfo represents keyword information
 type KeywordInfo struct {
 	Word      string    `json:"word"`
-	Aliases   string    `json:"aliases"`
 	Link      string    `json:"link"`
 	CreatedAt time.Time `json:"created_at"`
 }

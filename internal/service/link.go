@@ -86,8 +86,8 @@ func (s *LinkService) GetLink(ctx context.Context, word string, searchTerm strin
 
 	// Handle different types of links
 	if !isURL(shortcut.Link) {
-		s.logger.Debug("Link is an alias '%s', recursing", shortcut.Link)
-		// This is an alias, recurse
+		s.logger.Debug("Link is a keyword reference '%s', recursing", shortcut.Link)
+		// This is a keyword reference, recurse
 		return s.GetLink(ctx, shortcut.Link, searchTerm)
 	}
 
@@ -107,17 +107,12 @@ func (s *LinkService) UpdateLink(ctx context.Context, req domain.LinkRequest, us
 		return err
 	}
 
-	// If the link is not a URL, validate it's a valid alias
+	// Validate that the link is a proper URL
 	if !isURL(req.Link) {
-		s.logger.Debug("Validating alias link: %s", req.Link)
-		_, err := s.GetLink(ctx, req.Link, "")
-		if err != nil {
-			s.logger.Error("Invalid alias link '%s': %v", req.Link, err)
-			return InvalidQueryError{
-				Message: "The link target appears to neither be a URL, or a valid alias.",
-			}
+		s.logger.Warn("Invalid URL format: %s", req.Link)
+		return InvalidQueryError{
+			Message: "URL must start with http:// or https://",
 		}
-		s.logger.Debug("Alias validation successful: %s", req.Link)
 	}
 
 	shortcut := &domain.Shortcut{
@@ -150,7 +145,7 @@ func (s *LinkService) GetRecentQueries(ctx context.Context) ([]domain.PopularQue
 	return queries, nil
 }
 
-// GetAllKeywords retrieves all keywords with aliases
+// GetAllKeywords retrieves all keywords
 func (s *LinkService) GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo, error) {
 	s.logger.Debug("Fetching all keywords")
 
@@ -160,16 +155,7 @@ func (s *LinkService) GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo,
 		return nil, err
 	}
 
-	s.logger.Debug("Processing keywords for aliases: %d total keywords", len(keywords))
-
-	// Process aliases (simplified version - not implementing full recursive alias resolution for now)
-	for i := range keywords {
-		if !isURL(keywords[i].Link) {
-			keywords[i].Aliases = keywords[i].Link
-		}
-	}
-
-	// Filter to only return URLs (not aliases)
+	// Filter to only return URLs
 	var result []domain.KeywordInfo
 	for _, keyword := range keywords {
 		if isURL(keyword.Link) {
@@ -177,7 +163,7 @@ func (s *LinkService) GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo,
 		}
 	}
 
-	s.logger.Debug("Keywords retrieved and processed successfully: %d total, %d URLs", len(keywords), len(result))
+	s.logger.Debug("Keywords retrieved successfully: %d total, %d URLs", len(keywords), len(result))
 	return result, nil
 }
 

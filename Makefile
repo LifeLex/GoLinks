@@ -1,74 +1,81 @@
 # GoLinks Makefile
 
-# Variables
 BINARY_NAME=golinks
 BUILD_DIR=./build
+FRONTEND_DIR=./web/frontend
 
-# Go commands
 GOCMD=go
 GOBUILD=$(GOCMD) build
 GOTEST=$(GOCMD) test
 GOFMT=gofmt
 
-.PHONY: help run build test fmt fix lint clean
+.PHONY: help run build dev test fmt fix lint deps clean \
+        frontend-install frontend-build frontend-dev \
+        docker-build docker-run ci
 
-# Help
 help: ## Show available commands
-	@echo 'Available commands:'
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-10s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 
-# Development
-run: ## Run the application
-	@$(GOCMD) run cmd/server/main.go
+# --- Frontend ---------------------------------------------------------------
 
-dev: ## Run with hot reload (requires air)	
-	@air || $(GOCMD) run cmd/server/main.go
+frontend-install: ## Install frontend dependencies
+	@cd $(FRONTEND_DIR) && npm ci || (cd $(FRONTEND_DIR) && npm install)
 
-# Building
-build: ## Build the binary
+frontend-build: ## Build the Vite/React SPA into web/frontend/dist
+	@cd $(FRONTEND_DIR) && npm run build
+
+frontend-dev: ## Run the Vite dev server (proxies /api and /query to :8080)
+	@cd $(FRONTEND_DIR) && npm run dev
+
+# --- Go ---------------------------------------------------------------------
+
+run: frontend-build ## Run the application (builds frontend first)
+	@$(GOCMD) run ./cmd/server
+
+dev: ## Run Go (air if available) and Vite dev server concurrently
+	@command -v air >/dev/null 2>&1 && \
+	  (trap 'kill 0' INT TERM; air & (cd $(FRONTEND_DIR) && npm run dev); wait) || \
+	  (trap 'kill 0' INT TERM; $(GOCMD) run ./cmd/server & (cd $(FRONTEND_DIR) && npm run dev); wait)
+
+build: frontend-build ## Build the single-binary production artifact
 	@mkdir -p $(BUILD_DIR)
-	@$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/server/main.go
+	@$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/server
 
-# Testing
-test: ## Run tests
+test: ## Run Go tests
 	@$(GOTEST) -v -race ./...
 
-# Code quality
-fmt: ## Format code and check formatting
-	@echo "Formatting code..."
+fmt: ## Format Go code and check formatting
 	@$(GOFMT) -s -w .
 	@$(GOCMD) mod tidy
-	@echo "Checking formatting..."
 	@test -z "$$($(GOFMT) -s -l .)" && echo "✓ Code is properly formatted" || (echo "✗ Code formatting issues found" && exit 1)
 
-fix: ## Fix formatting and auto-fixable linting issues
-	@echo "Fixing code formatting..."
+fix: ## Auto-fix Go formatting and linting
 	@$(GOFMT) -s -w .
-	@echo "Running goimports..."
 	@which goimports > /dev/null || go install golang.org/x/tools/cmd/goimports@latest
 	@goimports -w -local golinks .
-	@echo "Fixing auto-fixable linting issues..."
 	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Installing..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
 	@golangci-lint run --fix --timeout=3m ./... || echo "Some issues may require manual fixing"
-	@echo "Code formatting and auto-fixes complete!"
 
-lint: ## Run linter
+lint: ## Run Go linter
 	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Installing..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
 	@golangci-lint run --timeout=3m ./...
 
-# Dependencies
-deps: ## Download dependencies
+deps: ## Download Go dependencies
 	@$(GOCMD) mod download
 	@$(GOCMD) mod tidy
 
-# Docker
+ci: frontend-install frontend-build lint test build ## Run the full CI pipeline
+
+# --- Docker -----------------------------------------------------------------
+
 docker-build: ## Build Docker image
 	@docker build -t $(BINARY_NAME) .
 
 docker-run: ## Run Docker container
 	@docker run -p 8080:8080 --rm $(BINARY_NAME)
 
-# Cleanup
+# --- Cleanup ----------------------------------------------------------------
+
 clean: ## Clean build artifacts
-	@rm -rf $(BUILD_DIR)
+	@rm -rf $(BUILD_DIR) $(FRONTEND_DIR)/dist
 	@rm -f *.db

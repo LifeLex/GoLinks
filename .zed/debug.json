@@ -1,0 +1,35 @@
+[
+  {
+    "label": "Backend (Go)",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "debug",
+    "program": "./cmd/server",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "PORT": "8080",
+      "DATABASE_PATH": "./golinks.db",
+      "BASE_URL": "http://localhost:8080",
+      "ENVIRONMENT": "development"
+    }
+  },
+  {
+    "label": "Frontend dev server (Vite)",
+    "adapter": "JavaScript",
+    "type": "node",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/web/frontend/node_modules/vite/bin/vite.js",
+    "cwd": "$ZED_WORKTREE_ROOT/web/frontend",
+    "console": "integratedTerminal",
+    "skipFiles": ["<node_internals>/**"]
+  },
+  {
+    "label": "Frontend (Chrome)",
+    "adapter": "JavaScript",
+    "type": "chrome",
+    "request": "launch",
+    "url": "http://localhost:5173",
+    "webRoot": "$ZED_WORKTREE_ROOT/web/frontend",
+    "skipFiles": ["<node_internals>/**"]
+  }
+]

@@ -1,0 +1,90 @@
+@import "@fontsource/inter/300.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "highlight.js/styles/github.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Rams-inspired palette ported to shadcn HSL tokens.
+       Originals kept as reference in the comments. */
+
+    --background: 0 0% 98%;             /* rams-off-white #FAFAFA */
+    --foreground: 0 0% 20%;             /* rams-charcoal  #333333 */
+
+    --card: 0 0% 100%;                  /* rams-white */
+    --card-foreground: 0 0% 10%;        /* rams-black */
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+
+    --primary: 14 100% 60%;             /* rams-orange   #FF6B35 — Braun accent */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 90%;              /* rams-light-grey */
+    --secondary-foreground: 0 0% 20%;
+
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 40%;       /* rams-dark-grey */
+
+    --accent: 221 83% 53%;              /* rams-blue     #2563EB — for links/focus */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;           /* rams-red      #DC2626 */
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 162 94% 30%;             /* rams-green    #059669 */
+    --success-foreground: 0 0% 100%;
+
+    --border: 0 0% 90%;                 /* rams-light-grey */
+    --input: 0 0% 80%;                  /* rams-medium-grey */
+    --ring: 14 100% 60%;                /* rams-orange */
+
+    --radius: 0.25rem;                  /* 4px — rams-radius-md */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Rams-flavoured prose overrides for MDX-rendered docs.
+     We keep the accent orange for link hover and use the mono font for code. */
+  .prose :where(a):not(:where([class~="not-prose"] *)) {
+    @apply text-accent no-underline font-medium;
+  }
+  .prose :where(a):not(:where([class~="not-prose"] *)):hover {
+    @apply text-primary underline;
+  }
+  .prose :where(code):not(:where([class~="not-prose"] *)) {
+    @apply font-mono text-sm bg-secondary border border-input rounded-sm px-1 py-0.5;
+  }
+  .prose :where(code):not(:where([class~="not-prose"] *))::before,
+  .prose :where(code):not(:where([class~="not-prose"] *))::after {
+    content: none;
+  }
+  .prose :where(pre):not(:where([class~="not-prose"] *)) {
+    @apply font-mono bg-card border border-border rounded-md;
+  }
+  .prose :where(pre code):not(:where([class~="not-prose"] *)) {
+    @apply bg-transparent border-0 p-0 text-sm;
+  }
+  .prose :where(h1, h2, h3, h4):not(:where([class~="not-prose"] *)) {
+    @apply font-medium tracking-tight text-foreground;
+  }
+  .prose :where(h1):not(:where([class~="not-prose"] *)) {
+    @apply font-light;
+  }
+}

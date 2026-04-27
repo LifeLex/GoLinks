@@ -1,58 +1,135 @@
-# Sample MDX Documentation
+---
+title: MDX Sample
+description: Markdown plus live shadcn components — rendered with @mdx-js/mdx in the browser.
+---
 
-This is a **sample MDX document** that combines markdown with JSX components.
+# MDX Sample
 
-## Interactive Elements
+This file is real **MDX**: the markdown is parsed by `@mdx-js/mdx`'s
+`evaluate()` at runtime, and any JSX in here renders as actual React
+components from `web/frontend/src/lib/mdx.tsx`.
 
-<div className="alert alert-info">
-  <strong>Info:</strong> This is an MDX component example.
-</div>
+Compare with the markdown-only sibling: [sample.md](/docs/sample.md).
 
-## Code with Syntax Highlighting
+## Alerts
 
-```javascript
-const greeting = (name) => {
-  return `Hello, ${name}!`;
-};
+The shadcn `Alert` primitive is exposed as `<Alert>` directly inside MDX.
 
-console.log(greeting("GoLinks"));
+<Alert variant="info">
+  <AlertTitle>Heads up</AlertTitle>
+  <AlertDescription>
+    This whole block is a React component. The icon styling, border colour, and
+    spacing all come from `components/ui/alert.tsx`.
+  </AlertDescription>
+</Alert>
+
+<Alert variant="success">
+  <AlertTitle>Build succeeded</AlertTitle>
+  <AlertDescription>
+    Use this for confirmations, completed steps, or "you're good to go" callouts.
+  </AlertDescription>
+</Alert>
+
+<Alert variant="destructive">
+  <AlertTitle>Heads up — runtime MDX</AlertTitle>
+  <AlertDescription>
+    Because MDX is evaluated client-side, anyone who can upload a `.mdx` file
+    can run JavaScript in viewers' browsers. Gate `POST /api/docs` behind
+    authentication before exposing this publicly.
+  </AlertDescription>
+</Alert>
+
+## Cards
+
+<Card>
+  <CardHeader>
+    <CardTitle>Why MDX?</CardTitle>
+    <CardDescription>
+      Mix prose with interactive bits without leaving the doc.
+    </CardDescription>
+  </CardHeader>
+  <CardContent>
+    Cards are useful for grouping related content — feature highlights,
+    setup steps, or example payloads. The whole card is just a `<Card>` with
+    standard markdown inside its `<CardContent>`:
+
+    - **Composable**: any markdown works inside the card.
+    - **Themed**: picks up the same Rams tokens as the rest of the app.
+    - **Boring**: no surprises, just a styled container.
+  </CardContent>
+</Card>
+
+## Tabs
+
+Use `<Tabs>` when the same content has variants per platform / language /
+audience. Below are the same setup steps split by browser:
+
+<Tabs defaultValue="chrome">
+  <TabsList>
+    <TabsTrigger value="chrome">Chrome / Edge</TabsTrigger>
+    <TabsTrigger value="firefox">Firefox</TabsTrigger>
+    <TabsTrigger value="curl">curl</TabsTrigger>
+  </TabsList>
+  <TabsContent value="chrome">
+    1. Settings → **Search engine** → **Manage search engines**.
+    2. Add a new entry with shortcut `go` and URL
+       `http://localhost:8080/query/%s`.
+  </TabsContent>
+  <TabsContent value="firefox">
+    1. Bookmarks → **Manage Bookmarks**.
+    2. New bookmark, location `http://localhost:8080/query/%s`, keyword `go`.
+  </TabsContent>
+  <TabsContent value="curl">
+    No browser config — just hit the API directly:
+
+    ```bash
+    curl -L http://localhost:8080/query/docs
+    ```
+  </TabsContent>
+</Tabs>
+
+## Buttons
+
+You can drop a `<Button>` straight into prose — handy for "next step" links:
+
+<Button asChild>
+  <a href="/setup">Open the setup guide →</a>
+</Button>
+
+<Button variant="outline" asChild>
+  <a href="/">Back to home</a>
+</Button>
+
+## Standard markdown still works
+
+Everything from [sample.md](/docs/sample.md) renders identically here — MDX is
+a strict superset of markdown.
+
+### Code blocks
+
+```typescript
+import { evaluate } from "@mdx-js/mdx";
+import * as runtime from "react/jsx-runtime";
+
+const { default: Content } = await evaluate(source, {
+  ...runtime,
+  useMDXComponents: () => mdxComponents,
+});
 ```
-
-## Custom Components (Future)
-
-In the future, we could add custom React components:
-
-```jsx
-<CodeBlock language="go">
-  func renderMDX() string {
-    return "Awesome!"
-  }
-</CodeBlock>
-```
-
-## Standard Markdown Features
-
-All standard markdown features work:
-
-- **Bold text**
-- *Italic text*
-- `Inline code`
-- [Links](https://example.com)
-
-### Lists
-
-1. First item
-2. Second item
-3. Third item
 
 ### Tables
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Markdown | ✅ | Fully supported |
-| MDX | 🚧 | Basic support |
-| React Components | ⏳ | Planned |
+| Component | Source                            | Variants                              |
+| --------- | --------------------------------- | ------------------------------------- |
+| `Alert`   | `components/ui/alert.tsx`         | `default`, `info`, `success`, `destructive` |
+| `Card`    | `components/ui/card.tsx`          | —                                     |
+| `Tabs`    | `components/ui/tabs.tsx`          | —                                     |
+| `Button`  | `components/ui/button.tsx`        | `default`, `outline`, `ghost`, `link`, `secondary`, `destructive` |
+
+### Blockquote
+
+> The best documentation has a working example one click away.
 
 ---
 
-*This MDX file demonstrates the potential for interactive documentation.*
+*Edit this file or upload a new one from the [docs page](/docs) to try things out.*

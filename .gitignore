@@ -61,8 +61,11 @@ tmp/
 # Docker volumes
 data/
 
-# Node modules (if any frontend tooling is added)
+# Frontend tooling
 node_modules/
+web/frontend/dist/*
+# Keep the stub so `go build` works before `npm run build` has been run.
+!web/frontend/dist/index.html
 
 # Backup files
 *.bak

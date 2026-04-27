@@ -1,61 +1,58 @@
-# Build stage
-FROM golang:1.21-alpine AS builder
+# syntax=docker/dockerfile:1.6
 
-# Install build dependencies
+# -----------------------------------------------------------------------------
+# Stage 1: build the React/Vite frontend into web/frontend/dist
+# -----------------------------------------------------------------------------
+FROM node:20-alpine AS frontend
+WORKDIR /app/web/frontend
+COPY web/frontend/package*.json ./
+RUN npm ci
+COPY web/frontend/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2: compile the Go binary with the built frontend embedded
+# -----------------------------------------------------------------------------
+FROM golang:1.21-alpine AS backend
 RUN apk add --no-cache gcc musl-dev sqlite-dev
-
-# Set working directory
 WORKDIR /app
 
-# Copy go mod files
 COPY go.mod go.sum ./
-
-# Download dependencies
 RUN go mod download
 
-# Copy source code
 COPY . .
+# Drop any pre-existing dist (in case the repo's stub is present) and copy the
+# freshly-built assets over the top so go:embed picks them up.
+RUN rm -rf web/frontend/dist
+COPY --from=frontend /app/web/frontend/dist ./web/frontend/dist
 
-# Build the application
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o golinks ./cmd/server
 
-# Final stage
+# -----------------------------------------------------------------------------
+# Stage 3: minimal runtime with the single binary only — no web/ directory.
+# -----------------------------------------------------------------------------
 FROM alpine:3.18
-
-# Install runtime dependencies
 RUN apk add --no-cache ca-certificates sqlite tzdata
 
-# Create non-root user
 RUN addgroup -g 1001 -S golinks && \
     adduser -u 1001 -S golinks -G golinks
 
-# Set working directory
 WORKDIR /app
-
-# Copy binary from builder stage
-COPY --from=builder /app/golinks .
-
-# Copy web assets
-COPY --from=builder /app/web ./web
-
-# Create data directory for SQLite database
+COPY --from=backend /app/golinks .
+# docs/ is still read from disk because uploads are persisted there.
+COPY --from=backend /app/docs ./docs
 RUN mkdir -p /app/data && chown -R golinks:golinks /app
 
-# Switch to non-root user
 USER golinks
 
-# Expose port
 EXPOSE 8080
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/homepage/ || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1
 
-# Set environment variables
 ENV PORT=8080
 ENV DATABASE_PATH=/app/data/golinks.db
 ENV BASE_URL=http://localhost:8080
 ENV ENVIRONMENT=production
 
-# Run the application
 CMD ["./golinks"]

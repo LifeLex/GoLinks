@@ -16,6 +16,7 @@ import (
 	"golinks/internal/logger"
 	"golinks/internal/repository"
 	"golinks/internal/service"
+	"golinks/web/frontend"
 
 	"github.com/gorilla/mux"
 )
@@ -71,6 +72,11 @@ func main() {
 
 	handler.RegisterRoutes(router)
 	docHandler.RegisterRoutes(router)
+
+	// Catch-all: serve the embedded SPA for every unmatched GET.
+	// Reserved prefixes guarantee we never shadow API/redirect routes even if
+	// the router's match order changes.
+	router.PathPrefix("/").Handler(frontend.Handler("api", "query"))
 
 	// Setup server
 	server := &http.Server{

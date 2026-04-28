@@ -4,15 +4,18 @@ import (
 	"os"
 	"strconv"
 
+	"golinks/internal/logger"
+
 	"github.com/joho/godotenv"
 )
 
 // Config holds all configuration for the application
 type Config struct {
-	Port         int    `json:"port"`
-	DatabasePath string `json:"database_path"`
-	BaseURL      string `json:"base_url"`
-	Environment  string `json:"environment"`
+	Port         int           `json:"port"`
+	DatabasePath string        `json:"database_path"`
+	BaseURL      string        `json:"base_url"`
+	Environment  string        `json:"environment"`
+	Logging      logger.Config `json:"logging"`
 }
 
 // Load loads configuration from environment variables and .env file
@@ -25,6 +28,10 @@ func Load() (*Config, error) {
 		DatabasePath: getEnv("DATABASE_PATH", "golinks.db"),
 		BaseURL:      getEnv("BASE_URL", "http://localhost:8080"),
 		Environment:  getEnv("ENVIRONMENT", "development"),
+		Logging: logger.Config{
+			Level:  getEnv("LOG_LEVEL", "info"),
+			Format: "text", // Not used in simple logger
+		},
 	}
 
 	return cfg, nil

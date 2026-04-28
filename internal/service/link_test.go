@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"golinks/internal/domain"
+	"golinks/internal/logger"
 )
 
 // Mock repositories for testing
@@ -33,13 +34,11 @@ func (m *mockShortcutRepository) Create(ctx context.Context, shortcut *domain.Sh
 func (m *mockShortcutRepository) GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo, error) {
 	var keywords []domain.KeywordInfo
 	for word, shortcut := range m.shortcuts {
-		if isURL(shortcut.Link) {
-			keywords = append(keywords, domain.KeywordInfo{
-				Word:      word,
-				Link:      shortcut.Link,
-				CreatedAt: shortcut.CreatedAt,
-			})
-		}
+		keywords = append(keywords, domain.KeywordInfo{
+			Word:      word,
+			Link:      shortcut.Link,
+			CreatedAt: shortcut.CreatedAt,
+		})
 	}
 	return keywords, nil
 }
@@ -109,7 +108,7 @@ func TestLinkService_GetLink(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name: "alias redirect",
+			name: "keyword reference redirect",
 			shortcuts: map[string]*domain.Shortcut{
 				"d": {
 					ID:   1,
@@ -158,7 +157,8 @@ func TestLinkService_GetLink(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			shortcutRepo := &mockShortcutRepository{shortcuts: tt.shortcuts}
 			queryRepo := &mockQueryRepository{}
-			service := NewLinkService(shortcutRepo, queryRepo)
+			mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+			service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
 
 			got, err := service.GetLink(context.Background(), tt.word, tt.searchTerm)
 
@@ -188,23 +188,6 @@ func TestLinkService_UpdateLink(t *testing.T) {
 			request: domain.LinkRequest{
 				Word: "docs",
 				Link: "https://docs.example.com",
-			},
-			userID:  "testuser",
-			wantErr: false,
-		},
-		{
-			name: "valid alias",
-			shortcuts: map[string]*domain.Shortcut{
-				"docs": {
-					ID:   1,
-					Word: "docs",
-					Link: "https://docs.example.com",
-					User: "testuser",
-				},
-			},
-			request: domain.LinkRequest{
-				Word: "d",
-				Link: "docs",
 			},
 			userID:  "testuser",
 			wantErr: false,
@@ -240,11 +223,11 @@ func TestLinkService_UpdateLink(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:      "invalid alias target",
+			name:      "invalid URL format",
 			shortcuts: map[string]*domain.Shortcut{},
 			request: domain.LinkRequest{
-				Word: "d",
-				Link: "nonexistent",
+				Word: "docs",
+				Link: "example.com", // Missing http:// or https://
 			},
 			userID:  "testuser",
 			wantErr: true,
@@ -255,7 +238,8 @@ func TestLinkService_UpdateLink(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			shortcutRepo := &mockShortcutRepository{shortcuts: tt.shortcuts}
 			queryRepo := &mockQueryRepository{}
-			service := NewLinkService(shortcutRepo, queryRepo)
+			mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+			service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
 
 			err := service.UpdateLink(context.Background(), tt.request, tt.userID)
 
@@ -269,7 +253,8 @@ func TestLinkService_UpdateLink(t *testing.T) {
 func TestLinkService_GetRecentQueries(t *testing.T) {
 	shortcutRepo := &mockShortcutRepository{shortcuts: map[string]*domain.Shortcut{}}
 	queryRepo := &mockQueryRepository{}
-	service := NewLinkService(shortcutRepo, queryRepo)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
 
 	queries, err := service.GetRecentQueries(context.Background())
 
@@ -296,10 +281,10 @@ func TestLinkService_GetAllKeywords(t *testing.T) {
 			User:      "testuser",
 			CreatedAt: time.Now(),
 		},
-		"d": {
+		"github": {
 			ID:        2,
-			Word:      "d",
-			Link:      "docs", // This is an alias, should be filtered out
+			Word:      "github",
+			Link:      "https://github.com",
 			User:      "testuser",
 			CreatedAt: time.Now(),
 		},
@@ -307,7 +292,8 @@ func TestLinkService_GetAllKeywords(t *testing.T) {
 
 	shortcutRepo := &mockShortcutRepository{shortcuts: shortcuts}
 	queryRepo := &mockQueryRepository{}
-	service := NewLinkService(shortcutRepo, queryRepo)
+	mockLogger := logger.New(logger.Config{Level: "debug", Format: "text"})
+	service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
 
 	keywords, err := service.GetAllKeywords(context.Background())
 
@@ -315,13 +301,23 @@ func TestLinkService_GetAllKeywords(t *testing.T) {
 		t.Errorf("LinkService.GetAllKeywords() error = %v", err)
 	}
 
-	// Should only return URLs, not aliases
-	if len(keywords) != 1 {
-		t.Errorf("LinkService.GetAllKeywords() expected 1 keyword, got %d", len(keywords))
+	// Should return only URLs
+	if len(keywords) != 2 {
+		t.Errorf("LinkService.GetAllKeywords() expected 2 keywords, got %d", len(keywords))
 	}
 
-	if keywords[0].Word != "docs" {
-		t.Errorf("LinkService.GetAllKeywords() expected 'docs', got %s", keywords[0].Word)
+	// Check that we have both keywords
+	keywordMap := make(map[string]bool)
+	for _, keyword := range keywords {
+		keywordMap[keyword.Word] = true
+	}
+
+	if !keywordMap["docs"] {
+		t.Error("LinkService.GetAllKeywords() missing 'docs' keyword")
+	}
+
+	if !keywordMap["github"] {
+		t.Error("LinkService.GetAllKeywords() missing 'github' keyword")
 	}
 }
 

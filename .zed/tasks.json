@@ -1,0 +1,58 @@
+[
+  {
+    "label": "Run backend (Go)",
+    "command": "go",
+    "args": ["run", "./cmd/server"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "PORT": "8080",
+      "DATABASE_PATH": "./golinks.db",
+      "BASE_URL": "http://localhost:8080",
+      "ENVIRONMENT": "development"
+    },
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never"
+  },
+  {
+    "label": "Run frontend dev server (Vite)",
+    "command": "npm",
+    "args": ["run", "dev"],
+    "cwd": "$ZED_WORKTREE_ROOT/web/frontend",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never"
+  },
+  {
+    "label": "Run full stack (make dev)",
+    "command": "make",
+    "args": ["dev"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "never"
+  },
+  {
+    "label": "Build frontend",
+    "command": "npm",
+    "args": ["run", "build"],
+    "cwd": "$ZED_WORKTREE_ROOT/web/frontend",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "on_success"
+  },
+  {
+    "label": "Build production binary",
+    "command": "make",
+    "args": ["build"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always",
+    "hide": "on_success"
+  }
+]

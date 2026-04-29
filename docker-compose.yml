@@ -1,30 +1,49 @@
-version: '3.8'
-
+# Local development stack with Postgres. The `app` service is the GoLinks
+# server connected to a Postgres-backed database. Goose runs migrations
+# automatically on boot.
+#
+# Usage:
+#   docker compose up --build
+#   open http://localhost:8080
+#
+# To run against SQLite instead, drop the `db` service and set:
+#   DATABASE_DRIVER=sqlite
+#   DATABASE_URL=/app/data/golinks.db
 services:
-  golinks:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: golinks
+      POSTGRES_PASSWORD: golinks
+      POSTGRES_DB: golinks
+    ports:
+      - "5432:5432"
+    volumes:
+      - golinks-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U golinks -d golinks"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
     build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      DATABASE_DRIVER: postgres
+      DATABASE_URL: "postgres://golinks:golinks@db:5432/golinks?sslmode=disable"
+      BASE_URL: "http://localhost:8080"
+      ENVIRONMENT: development
+      LOG_LEVEL: info
     ports:
       - "8080:8080"
-    environment:
-      - PORT=8080
-      - DATABASE_PATH=/app/data/golinks.db
-      - BASE_URL=http://localhost:8080
-      - ENVIRONMENT=production
     volumes:
-      - golinks_data:/app/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/homepage/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
+      - ./docs:/app/docs
 
 volumes:
-  golinks_data:
-    driver: local
-
-networks:
-  default:
-    name: golinks_network
+  golinks-pgdata:

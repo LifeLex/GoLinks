@@ -79,9 +79,22 @@ go github myproject       # Search GitHub for "myproject"
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8080` | Server port |
-| `DATABASE_PATH` | `golinks.db` | SQLite database path |
 | `BASE_URL` | `http://localhost:8080` | Base URL for the service |
 | `ENVIRONMENT` | `development` | Environment (development/production) |
+| `LOG_LEVEL` | `info` | Logger level (debug/info/warn/error) |
+| `DATABASE_DRIVER` | `sqlite` | Storage backend — `sqlite` or `postgres` |
+| `DATABASE_URL` | derived from `DATABASE_PATH` | Connection string. SQLite: a path or `file:` DSN. Postgres: `postgres://user:pass@host:5432/db?sslmode=disable` |
+| `DATABASE_PATH` | `golinks.db` | Deprecated; only used to synthesise `DATABASE_URL` for SQLite when `DATABASE_URL` is empty |
+
+See `.env.example` for a copy-pasteable template.
+
+### Running with Postgres
+
+```bash
+docker compose up --build
+```
+
+`docker-compose.yml` boots GoLinks against a local Postgres container. Migrations run automatically on first start.
 
 ### Creating Links
 
@@ -103,20 +116,24 @@ Result: https://github.com/search?q=awesome-project
 
 ## Architecture
 
-The application follows Clean Architecture principles:
+Hexagonal architecture: a feature-led `core/` of business logic with explicit ports, surrounded by `adapters/` that implement them, and a `platform/` layer for cross-cutting infrastructure. See `ARCHITECTURE.md` for the full reference.
 
 ```
-cmd/server/          # Application entrypoint
+cmd/server/                      # Composition root
 internal/
-├── config/          # Configuration management
-├── database/        # Database connection and migrations
-├── domain/          # Domain models and interfaces
-├── handlers/        # HTTP handlers and routing
-├── repository/      # Data access layer
-└── service/         # Business logic layer
-web/
-├── static/          # CSS, images, and static assets
-└── templates/       # HTML templates
+├── core/                        # Business logic
+│   ├── links/                   # entity + ports + service
+│   └── docs/                    # entity + ports + service
+├── adapters/
+│   ├── httpapi/                 # Inbound: HTTP handlers (JSON + redirect)
+│   ├── persistence/             # Outbound: GORM repositories
+│   └── filesystem/              # Outbound: docs/ folder adapter
+└── platform/
+    ├── config/                  # Env loading
+    ├── logger/                  # slog wrapper
+    └── database/                # GORM connection + Goose migrations
+web/frontend/                    # React + Vite SPA (embedded into the binary)
+docs/                            # User-uploaded markdown/MDX
 ```
 
 ## Design Philosophy
@@ -189,9 +206,16 @@ make docker-run
 
 ```bash
 export PORT=8080
-export DATABASE_PATH=/data/golinks.db
 export BASE_URL=https://go.yourcompany.com
 export ENVIRONMENT=production
+
+# SQLite (default) — needs a writable persistent volume
+export DATABASE_DRIVER=sqlite
+export DATABASE_URL=/data/golinks.db
+
+# OR: Postgres
+export DATABASE_DRIVER=postgres
+export DATABASE_URL="postgres://user:pass@db:5432/golinks?sslmode=require"
 ```
 
 ## Contributing

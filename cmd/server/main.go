@@ -1,3 +1,5 @@
+// Command server is the GoLinks HTTP server. It is the composition root: every
+// adapter and use case is wired up here, and nowhere else.
 package main
 
 import (
@@ -5,80 +7,89 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"golinks/internal/config"
-	"golinks/internal/database"
-	"golinks/internal/handlers"
-	"golinks/internal/logger"
-	"golinks/internal/repository"
-	"golinks/internal/service"
+	"golinks/internal/adapters/filesystem"
+	"golinks/internal/adapters/httpapi"
+	"golinks/internal/adapters/persistence"
+	_ "golinks/internal/adapters/persistence/migrations" // registers Goose migrations via init()
+	"golinks/internal/core/docs"
+	"golinks/internal/core/links"
+	"golinks/internal/platform/config"
+	"golinks/internal/platform/database"
+	"golinks/internal/platform/logger"
 	"golinks/web/frontend"
 
 	"github.com/gorilla/mux"
 )
 
 func main() {
-	// Load configuration
+	// Load configuration.
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Initialize simple logging
+	// Initialize structured logger.
 	logger.Initialize(cfg.Logging)
 	appLogger := logger.Default()
 
 	appLogger.Info("Starting GoLinks application on port %d (env: %s)", cfg.Port, cfg.Environment)
 
-	// Initialize database
-	appLogger.Info("Initializing database: %s", cfg.DatabasePath)
-	db, err := database.NewSQLiteDB(cfg.DatabasePath)
+	// Open database connection. Driver and URL come from config; sqlite is
+	// the default, postgres is selected via DATABASE_DRIVER=postgres.
+	driver := database.Driver(cfg.DatabaseDriver)
+	appLogger.Info("Initializing database: driver=%s url=%s", driver, redactedURL(cfg.DatabaseURL))
+	db, err := database.OpenGorm(driver, cfg.DatabaseURL)
 	if err != nil {
 		appLogger.Error("Failed to initialize database: %v", err)
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer db.Close()
+	sqlDB, err := db.DB()
+	if err != nil {
+		appLogger.Error("Failed to access underlying *sql.DB: %v", err)
+		log.Fatalf("Failed to access underlying *sql.DB: %v", err)
+	}
+	defer sqlDB.Close()
 
-	// Run migrations
+	// Run migrations via Goose.
 	appLogger.Info("Running database migrations")
-	if err := database.Migrate(db); err != nil {
+	if err := database.Migrate(db, driver); err != nil {
 		appLogger.Error("Failed to run migrations: %v", err)
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 	appLogger.Info("Database migrations completed successfully")
 
-	// Initialize repositories
-	appLogger.Info("Initializing repositories")
-	shortcutRepo := repository.NewShortcutRepository(db, appLogger)
-	queryRepo := repository.NewQueryRepository(db, appLogger)
+	// Outbound adapters.
+	appLogger.Info("Initializing outbound adapters")
+	linksRepo := persistence.NewLinksRepo(db, appLogger)
+	queriesRepo := persistence.NewQueriesRepo(db, appLogger)
+	docsStore := filesystem.NewDocStore("docs")
 
-	// Initialize services
-	appLogger.Info("Initializing services")
-	linkService := service.NewLinkService(shortcutRepo, queryRepo, appLogger)
-	docService := service.NewDocumentService("docs", appLogger)
+	// Use cases.
+	appLogger.Info("Initializing use cases")
+	linkService := links.NewService(linksRepo, queriesRepo, appLogger)
+	docService := docs.NewService(docsStore, appLogger)
 
-	// Initialize handlers
-	appLogger.Info("Initializing handlers")
-	handler := handlers.NewHandler(linkService, cfg, appLogger)
-	docHandler := handlers.NewDocumentHandler(docService, appLogger)
+	// Inbound adapters.
+	appLogger.Info("Initializing inbound adapters")
+	linksHandler := httpapi.NewLinksHandler(linkService, cfg, appLogger)
+	docsHandler := httpapi.NewDocsHandler(docService, appLogger)
 
-	// Setup router
+	// Router.
 	appLogger.Info("Setting up HTTP router")
 	router := mux.NewRouter()
-
-	handler.RegisterRoutes(router)
-	docHandler.RegisterRoutes(router)
-
-	// Catch-all: serve the embedded SPA for every unmatched GET.
-	// Reserved prefixes guarantee we never shadow API/redirect routes even if
-	// the router's match order changes.
+	linksHandler.Register(router)
+	docsHandler.Register(router)
+	// SPA catch-all (last). Reserved prefixes guarantee /api/* and /query/*
+	// never accidentally fall through to the frontend handler.
 	router.PathPrefix("/").Handler(frontend.Handler("api", "query"))
 
-	// Setup server
+	// Server with graceful shutdown.
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      router,
@@ -87,7 +98,6 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in a goroutine
 	go func() {
 		appLogger.Info("Starting HTTP server on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -96,13 +106,11 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	appLogger.Info("Received shutdown signal, initiating graceful shutdown")
 
-	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -113,4 +121,22 @@ func main() {
 	}
 
 	appLogger.Info("Server shutdown completed successfully")
+}
+
+// redactedURL strips credentials from a database URL for safe logging. SQLite
+// paths pass through unchanged; postgres URLs have any password in the
+// userinfo portion replaced with "***".
+func redactedURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := neturl.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	if _, hasPassword := u.User.Password(); !hasPassword {
+		return raw
+	}
+	u.User = neturl.UserPassword(u.User.Username(), "***")
+	return u.String()
 }

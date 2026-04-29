@@ -1,8 +1,8 @@
 # Architecture
 
-This document describes how GoLinks is wired end-to-end: the layered Go backend, the React/Vite SPA, the way they're glued together into a single binary, and exactly what each HTTP endpoint does.
+This document describes how GoLinks is wired end-to-end: the hexagonal Go backend, the React/Vite SPA, the way they're glued together into a single binary, and exactly what each HTTP endpoint does.
 
-`README.md` covers what the app is and how to use it. `CLAUDE.md` captures conventions for contributors. This file is the implementation reference — read it when you need to understand or change behaviour.
+`README.md` covers what the app is and how to use it. `CLAUDE.md` captures conventions for contributors. This file is the implementation reference.
 
 ---
 
@@ -12,7 +12,7 @@ This document describes how GoLinks is wired end-to-end: the layered Go backend,
 ┌────────────────────────────────────────────────────────────────────┐
 │                         golinks (single binary)                    │
 │                                                                    │
-│  cmd/server/main.go                                                │
+│  cmd/server/main.go              composition root                  │
 │    └── gorilla/mux router                                          │
 │         ├── /query/{path:.*}            → 302 redirect             │
 │         ├── /api/links       (GET/POST) → JSON                     │
@@ -22,9 +22,12 @@ This document describes how GoLinks is wired end-to-end: the layered Go backend,
 │         └── /*  (catch-all)             → embedded SPA / index.html│
 │                                                                    │
 │  internal/                                                         │
-│    handlers ──▶ service ──▶ repository ──▶ database (SQLite)       │
-│       ▲                                          │                 │
-│       └── domain models (json + db tagged) ◀────┘                  │
+│    core/<feature>/  (entities, ports, use cases)                   │
+│    adapters/<type>/ (httpapi, persistence, filesystem)             │
+│    platform/        (config, logger, database{connect,migrate})    │
+│                                                                    │
+│  Database: GORM → glebarez/sqlite (default) | gorm.io/postgres     │
+│  Migrations: Goose (per-dialect SQL files, embedded)               │
 │                                                                    │
 │  web/frontend/                                                     │
 │    React 18 + TS + Vite + Tailwind + shadcn/ui                     │
@@ -32,182 +35,134 @@ This document describes how GoLinks is wired end-to-end: the layered Go backend,
 │    └── dist/  ◀── //go:embed all:dist  (web/frontend/embed.go)     │
 │                                                                    │
 │  docs/        ── on-disk markdown/MDX (read at runtime)            │
-│  data/        ── SQLite database file                              │
+│  data/        ── SQLite database file (when DRIVER=sqlite)         │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-One process. Two TCP listeners only in development (`:8080` Go, `:5173` Vite proxying back). In production, one listener: `:8080`.
+One process. Two TCP listeners only in development (`:8080` Go, `:5173` Vite proxying back). In production: one listener, `:8080`. Pure-Go build — `CGO_ENABLED=0` everywhere.
 
 ---
 
-## Repository layout
+## Hexagonal layout
 
 ```
-cmd/server/main.go                     Entrypoint: config → DB → repos → services → handlers → router
+cmd/server/main.go                     entrypoint + DI wiring
 internal/
-├── config/config.go                   Env / .env loading; Config struct
-├── database/sqlite.go                 sql.DB + schema migrations
-├── domain/models.go                   Shortcut, Query, KeywordInfo, PopularQuery, LinkRequest (json+db tags)
-├── handlers/handler.go                Redirect + /api/links + legacy /update/
-├── handlers/document.go               /api/docs CRUD
-├── handlers/handler_test.go           Table-driven tests with mock services
-├── logger/logger.go                   slog wrapper
-├── repository/shortcut.go             SQL for linktable
-├── repository/query.go                SQL for queries (analytics)
-└── service/
-    ├── link.go                        LinkService: GetLink, UpdateLink, GetRecentQueries, GetAllKeywords
-    └── document.go                    DocumentService: GetDocument, SaveDocument, ListDocuments, DeleteDocument
-web/frontend/
-├── embed.go                           //go:embed all:dist + SPA fallback handler
-├── vite.config.ts                     Dev server proxy: /api, /query → :8080
-├── src/
-│   ├── App.tsx                        Routes
-│   ├── main.tsx                       Entry: QueryClientProvider, BrowserRouter, Toaster
-│   ├── index.css                      Tailwind + Rams tokens → shadcn HSL vars + prose overrides
-│   ├── components/                    Navbar, LinkForm, KeywordTable, RecentQueries, DocUploader, MDXRenderer
-│   ├── components/ui/                 shadcn primitives (button, input, card, table, alert, dialog, tabs, sonner, skeleton)
-│   ├── pages/                         Home, Setup, DocsList, Doc, NotFound
-│   └── lib/
-│       ├── api.ts                     Typed fetch wrappers + ApiError
-│       ├── mdx.tsx                    @mdx-js/mdx evaluate() + component map
-│       └── utils.ts                   cn() helper
-docs/                                  Sample markdown/MDX (and uploaded user docs)
-.zed/debug.json                        Zed debugger configs (Backend Go, Vite, Chrome)
-Dockerfile                             Three-stage: node → go → alpine
-Makefile                               dev / build / test / docker / lint
+├── core/                              business logic — depends only on its own ports
+│   ├── links/
+│   │   ├── entity.go                  Shortcut, KeywordInfo, PopularQuery, LinkRequest
+│   │   ├── ports.go                   Repository, QueryRepository (interfaces)
+│   │   ├── service.go                 Service: GetLink, UpdateLink, GetAllKeywords, GetRecentQueries
+│   │   ├── errors.go                  InvalidQueryError
+│   │   └── service_test.go            mocks live alongside the test
+│   └── docs/
+│       ├── entity.go                  DocumentInfo, DocumentSource
+│       ├── ports.go                   Store interface
+│       ├── service.go                 Service: parses frontmatter, delegates I/O to Store
+│       ├── errors.go                  ErrNotFound
+│       └── service_test.go
+├── adapters/                          implementations of the ports
+│   ├── httpapi/                       inbound: HTTP transport
+│   │   ├── helpers.go                 writeJSON, userIDFromRequest
+│   │   ├── links_handler.go           Redirect, List, Create, UpdateLegacy
+│   │   ├── docs_handler.go            Get, List, Upload, Delete
+│   │   └── links_handler_test.go      mock LinkService, table-driven tests
+│   ├── persistence/                   outbound: GORM repositories
+│   │   ├── models.go                  shortcutRow, queryRow, tagRow (unexported) + Models() accessor
+│   │   ├── mapper.go                  domain ↔ row conversion
+│   │   ├── links_repo.go              implements core/links.Repository
+│   │   ├── queries_repo.go            implements core/links.QueryRepository
+│   │   ├── repos_test.go              real in-memory SQLite via GORM + Goose
+│   │   └── migrations/                Goose Go-based migrations (single folder, dialect-agnostic)
+│   │       ├── doc.go                 package documentation + conventions
+│   │       └── 00001_initial_schema.go  AutoMigrate via GORM
+│   └── filesystem/                    outbound: docs/ folder
+│       ├── docs_store.go              implements core/docs.Store
+│       └── docs_store_test.go         t.TempDir-based tests
+└── platform/                          cross-cutting infrastructure
+    ├── config/
+    │   ├── config.go                  env loading; DatabaseDriver + DatabaseURL
+    │   └── config_test.go
+    ├── logger/
+    │   └── logger.go                  slog wrapper
+    └── database/
+        ├── connect.go                 OpenGorm(driver, url) — sqlite or postgres
+        ├── migrate.go                 Goose-driven migration runner + WithGorm/GormFromContext helpers
+        └── migrate_test.go            external test package (`database_test`) to break import cycle
+web/frontend/                          Vite + React SPA + embed.go
+docs/                                  user-uploaded .md / .mdx, read from disk at runtime
+docker-compose.yml                     GoLinks + Postgres for local dev
+.env.example                           every supported env var with examples
 ```
+
+Frontend embed lives at `web/frontend/embed.go` rather than under `internal/platform/frontend/` because `//go:embed` cannot use relative `..` paths. The embed file must be a sibling of `dist/`. Conceptually it's an inbound adapter; physically it sits next to the JS code so the directive resolves.
 
 ---
 
 ## Backend layers
 
-The backend follows Clean Architecture. Each layer depends only on the layer below it via interfaces.
-
 ### `cmd/server/main.go` — entrypoint
 
-Orchestrates startup in this order (`main.go:24-73`):
+Composition root. Loads config, opens the database, runs migrations, instantiates each adapter, wires services, registers routes, starts the HTTP server with a graceful-shutdown loop.
 
-1. `config.Load()` — reads `.env` (optional) and env vars (`PORT`, `DATABASE_PATH`, `BASE_URL`, `ENVIRONMENT`, `LOG_LEVEL`).
-2. `logger.Initialize(cfg.Logging)` — structured slog logger.
-3. `database.NewSQLiteDB(cfg.DatabasePath)` + `database.Migrate(db)` — open connection, run idempotent migrations.
-4. Construct repositories (`shortcutRepo`, `queryRepo`).
-5. Construct services (`linkService`, `docService`).
-6. Construct handlers (`handler`, `docHandler`).
-7. Build router; register routes; mount the embedded SPA at the catch-all.
-8. Start HTTP server in a goroutine; block on `SIGINT`/`SIGTERM`; graceful shutdown with 30 s timeout.
+The full DI graph lives in this one file. No constructor is called anywhere else in the codebase.
 
-### `internal/handlers/` — HTTP transport
+### `internal/core/<feature>/` — business logic
 
-The thinnest layer: parse requests, call services, encode responses. No business logic. Errors of type `service.InvalidQueryError` are mapped to HTTP 400; everything else is 500.
+Two features today: `links` and `docs`. Each feature folder is a complete mini-hexagon:
 
-`writeJSON(w, status, body)` in `internal/handlers/document.go:124` is the canonical JSON encoder used across both files.
+- `entity.go` — domain types (no tags except `json` for API responses).
+- `ports.go` — interfaces the use cases consume (`Repository`, `QueryRepository`, `Store`).
+- `service.go` — use case implementation (`Service` struct).
+- `errors.go` — package-level sentinel errors and typed errors (`InvalidQueryError`, `ErrNotFound`).
+- `service_test.go` — table-driven tests with hand-written mocks.
 
-### `internal/service/` — business logic
+The core never imports an adapter. Adapters import core to satisfy its ports.
 
-The brain. `LinkService` implements golink resolution semantics including space-splitting and aliasing (more under `/query/` below). `DocumentService` does file I/O and frontmatter parsing.
+### `internal/adapters/<type>/` — implementations
 
-Services depend on repository **interfaces** (`ShortcutRepository`, `QueryRepository` declared in `service/link.go:15-25`), not concrete types — that's how `mockLinkService` in `handler_test.go` is possible.
+- **`httpapi/`** — inbound HTTP. Each handler exposes a `Register(*mux.Router)` method that wires its routes. Package name is `httpapi` rather than `http` to avoid shadowing the standard library.
+- **`persistence/`** — GORM repositories. One implementation per port; GORM dispatches on the connection's dialect at startup.
+- **`filesystem/`** — local-disk storage for the docs/ folder. Implements the `docs.Store` port and surfaces `docs.ErrNotFound` when files are missing.
 
-### `internal/repository/` — data access
+### `internal/platform/` — cross-cutting infrastructure
 
-Plain `database/sql` queries. No ORM. Each method takes a `context.Context` and returns domain types defined in `internal/domain/`.
+- **`config/`** — `godotenv` + env-var loading. `Config` carries `DatabaseDriver`, `DatabaseURL`, the legacy `DatabasePath` fallback, and the rest.
+- **`logger/`** — slog wrapper exposing Printf-style `Info`/`Warn`/`Error`/`Debug` helpers and a process-wide default logger.
+- **`database/`** — `OpenGorm(driver, url)` returns a `*gorm.DB` for the requested backend. `Migrate(db, driver)` runs Goose against the right per-dialect migration directory. The `migrations/` subdirectory ships embedded into the binary via `//go:embed`.
 
-### `internal/database/` — SQLite
+### Database layer (GORM + Goose)
 
-Three tables (`internal/database/sqlite.go:28-46`):
-
-- **linktable** — `(id, word, link, user, created_at)`.
-- **queries** — `(query_id, word_id → linktable.id, created_at)`.
-- **tags** — `(id, word_id → linktable.id, tag)` — defined but currently unused.
-
-Indexes on `linktable.word`, `queries.word_id`, `queries.created_at`. Foreign keys are enabled via the connection string (`?_foreign_keys=on`).
-
-### `internal/domain/` — shared models
-
-POGOs (Plain Old Go Objects) with `json:` and `db:` tags. Used unchanged as both DB row targets and API response bodies — so a schema rename ripples through both layers automatically.
+- `OpenGorm` dispatches on the `Driver` value: `DriverSQLite` opens `glebarez/sqlite` (pure Go), `DriverPostgres` opens `gorm.io/driver/postgres` (uses `pgx`, also pure Go).
+- For SQLite, `OpenGorm` injects `?_pragma=foreign_keys(1)` if the URL doesn't already specify one, so FK enforcement matches Postgres behaviour out of the box.
+- `Migrate` extracts the underlying `*sql.DB` from GORM, attaches the `*gorm.DB` to a context via `WithGorm`, and calls `goose.UpContext`. Goose dialect string is mapped from our `Driver` (SQLite uses `"sqlite3"` in Goose terminology).
+- **Migrations are Go code, not SQL.** They live at `internal/adapters/persistence/migrations/`, in a single folder regardless of dialect. Each migration registers itself via `init()` and delegates schema work to GORM (`AutoMigrate`, `Migrator()`). GORM translates to dialect-specific SQL — `INTEGER PRIMARY KEY AUTOINCREMENT` vs `BIGSERIAL`, `DATETIME` vs `TIMESTAMP`, reserved-word quoting — without the migration author having to think about it.
+- The composition root blank-imports the migrations package (`_ "golinks/internal/adapters/persistence/migrations"`) so `init()` runs at startup. Tests do the same.
+- Goose's `goose_db_version` table is created automatically at first run; subsequent boots are no-ops unless new migrations land.
+- For genuinely dialect-specific work (FTS5 in SQLite, `tsvector` in Postgres) a single migration may dispatch on the dialect via raw `db.Exec`. Stays in the same folder — the dispatch lives inside the Go function, not the filesystem.
 
 ### `web/frontend/embed.go` — SPA bridge
 
-Compile-time `//go:embed all:dist` pulls the Vite build output into the binary. The exported `Handler(reservedPrefixes...)` returns an `http.Handler` that:
+Compile-time `//go:embed all:dist` pulls the Vite build output into the binary. The exported `Handler(reservedPrefixes ...)` returns an `http.Handler` that:
 
 - Refuses non-GET/HEAD with 405.
-- Refuses any path starting with `api/` or `query/` (defense in depth — those routes match earlier, but if registration order ever changes, the SPA must not shadow them).
+- Refuses any path starting with `api/` or `query/` (defensive backstop).
 - Serves real files from the embedded FS when they exist (`/assets/*`, `/favicon.ico`).
-- Falls back to `index.html` with `Cache-Control: no-cache` for everything else, so React Router can take over on hard refreshes of `/setup`, `/docs/foo`, etc.
+- Falls back to `index.html` with `Cache-Control: no-cache` for everything else, so React Router can take over on hard refreshes.
 
-There's also a `brokenHandler` that returns 503 with a helpful message if the embedded `dist/` is missing `index.html`. Combined with the committed stub `dist/index.html`, this guarantees `git clone && go build` always produces a runnable binary.
+If the embedded `dist/` is empty (e.g. fresh clone without `npm run build`), the handler returns 503 with a helpful message — combined with the committed stub `index.html`, this guarantees the binary is always runnable.
 
 ---
 
 ## Frontend architecture
 
-### Entry & routing
+(Unchanged from the prior version — see `CLAUDE.md` for the style rules. A short summary follows.)
 
-`src/main.tsx` mounts `<App />` inside `QueryClientProvider` + `BrowserRouter` and renders `<Toaster>` for sonner.
-
-`src/App.tsx` is the route table:
-
-| Path             | Component       | Notes                                         |
-| ---------------- | --------------- | --------------------------------------------- |
-| `/`              | `HomePage`      | Form + keyword list + recent queries          |
-| `/homepage`      | `HomePage`      | Legacy alias from the template era            |
-| `/setup`         | `SetupPage`     | Per-browser instructions in shadcn `Tabs`     |
-| `/docs`          | `DocsListPage`  | List + upload + delete                        |
-| `/docs/:filename`| `DocPage`       | Fetches raw source, runtime-compiles MDX      |
-| `*`              | `NotFoundPage`  | Custom 404 with shortcuts back to home/setup  |
-
-### State management
-
-- **Server state → TanStack Query.** Every fetch goes through a `useQuery` (read) or `useMutation` (write). Mutations call `queryClient.invalidateQueries(['links'])` etc. on success to refresh stale views.
-- **URL state → `useSearchParams`.** The `?missing=foo` query param after a failed redirect is read in `HomePage` and shown as a toast, then cleared.
-- **Form state → `react-hook-form` + `zod`.** `LinkForm` is the canonical example.
-- **Local UI state → `useState`.** Component-scoped, never lifted into a global store.
-
-### API client
-
-`src/lib/api.ts` exports an `api` object with one function per endpoint. Each is typed end-to-end:
-
-```ts
-api.listLinks()           : Promise<LinksResponse>
-api.createLink({word,link}): Promise<{success: true}>
-api.listDocs()            : Promise<{documents: DocumentInfo[]}>
-api.getDoc(filename)      : Promise<DocumentSource>
-api.uploadDoc(file: File) : Promise<{success: true; filename; url}>
-api.deleteDoc(filename)   : Promise<{success: true}>
-```
-
-Non-2xx responses throw `ApiError` carrying the body text + status code.
-
-### Styling
-
-`src/index.css`:
-
-- Imports `@fontsource/inter` (300/400/500/600), `@fontsource/jetbrains-mono` (400/500), and `highlight.js/styles/github.css`.
-- `@tailwind base/components/utilities`.
-- Defines shadcn HSL CSS variables under `:root`: `--background`, `--foreground`, `--primary` (Braun orange), `--accent` (functional blue), `--destructive`, `--muted`, etc. These map onto Dieter Rams-inspired tokens — see comments in the file for the original hex values.
-- Prose overrides under `@layer base` make MDX-rendered docs match the rest of the UI (orange-on-hover links, mono code blocks, etc.).
-
-`tailwind.config.ts` extends Tailwind with the shadcn token mapping (`bg-primary` → `hsl(var(--primary))`).
-
-### MDX pipeline
-
-```
-Doc page mounts
-  └── api.getDoc(filename) → { source, type, metadata }
-       └── <MDXRenderer source={source} />
-            └── compileMDX(source)        // src/lib/mdx.tsx
-                 └── @mdx-js/mdx evaluate()
-                      ├── remark-gfm           (tables, task lists, strikethrough)
-                      ├── rehype-highlight     (syntax highlighting)
-                      └── useMDXComponents → mdxComponents map
-                           ├── Alert, AlertTitle, AlertDescription
-                           ├── Card, CardHeader, CardTitle, CardDescription, CardContent
-                           ├── Button
-                           ├── Tabs, TabsList, TabsTrigger, TabsContent
-                           └── table/thead/tbody/tr/th/td → shadcn Table primitives
-```
-
-The whole pipeline runs in the browser. The Go server never sees compiled HTML — it just serves the raw `.md` / `.mdx` source.
+- **`src/main.tsx`** mounts `<App />` inside `QueryClientProvider`, `BrowserRouter`, and a sonner `<Toaster>`.
+- **`src/App.tsx`** is the route table: `/`, `/setup`, `/docs`, `/docs/:filename`, plus a custom 404.
+- **State:** TanStack Query for server state; `useSearchParams` for URL state; `react-hook-form` + `zod` for forms; `useState` for purely local UI state.
+- **API client:** `src/lib/api.ts` exports a typed `api` object. Errors throw `ApiError`; toasts surface them via sonner.
+- **MDX:** `src/lib/mdx.tsx` runs `@mdx-js/mdx evaluate()` in the browser with an explicit `mdxComponents` map (Alert, Card, Tabs, Button, plus custom table primitives for GFM tables).
 
 ---
 
@@ -215,60 +170,62 @@ The whole pipeline runs in the browser. The Go server never sees compiled HTML �
 
 ### Development
 
-`make dev` runs the Go server (via `air` if installed, else `go run`) and the Vite dev server (`:5173`) concurrently. Vite's dev server has a proxy (`vite.config.ts:14-17`) that forwards `/api/*` and `/query/*` to `http://localhost:8080`, so the React app can call relative URLs and hit the Go backend without CORS gymnastics.
+`make dev` runs the Go server (via `air` if installed) and the Vite dev server (`:5173`) concurrently. `vite.config.ts` proxies `/api/*` and `/query/*` to `http://localhost:8080`.
 
-For breakpoint debugging, see `.zed/debug.json` — three configs: Backend (Go via Delve), Frontend dev server (Vite via Node), Frontend (Chrome).
+For breakpoint debugging, see `.zed/debug.json` (Backend Go via Delve, Vite via Node, Chrome with source maps).
 
-### Production
+### Production single binary
 
 `make build` runs:
 
 1. `npm ci && npm run build` inside `web/frontend/` → produces `web/frontend/dist/`.
-2. `go build -o build/golinks ./cmd/server` — the `//go:embed all:dist` directive in `web/frontend/embed.go` pulls the dist into the binary.
+2. `CGO_ENABLED=0 go build -o build/golinks ./cmd/server` — `//go:embed all:dist` pulls dist into the binary; Goose migrations are also embedded.
 
-Result: a single ~14 MB binary that needs only the `docs/` directory and the SQLite db file at runtime.
+Result: a single ~20 MB pure-Go binary that needs only the `docs/` directory and a database (SQLite file or Postgres connection) at runtime.
 
 ### Docker
 
-`Dockerfile` is three-stage:
+Three-stage `Dockerfile`:
 
-1. `node:20-alpine` — installs `web/frontend/package*.json`, runs `npm ci`, then `npm run build`. Output: `/app/web/frontend/dist/`.
-2. `golang:1.21-alpine` — copies the dist over the top of any committed stub, runs `CGO_ENABLED=1 go build` (CGO needed for the SQLite driver).
-3. `alpine:3.18` — final runtime. Copies the binary and the `docs/` directory. **No `web/`** in the runtime image. Drops to a non-root `golinks` user. Exposes 8080. SQLite db lives in `/app/data/`.
+1. `node:20-alpine` builds the SPA.
+2. `golang:1.21-alpine` builds the binary with `CGO_ENABLED=0` — no `gcc`, no `sqlite-dev`, no C toolchain.
+3. `alpine:3.18` runtime with `ca-certificates` + `tzdata` only. Copies the binary and the `docs/` directory. Drops to a non-root `golinks` user. Exposes 8080.
 
-The `HEALTHCHECK` hits `http://localhost:8080/` every 30 s.
+### `docker-compose.yml`
+
+Local dev stack with Postgres. The `app` service runs GoLinks with `DATABASE_DRIVER=postgres`; the `db` service is `postgres:16-alpine` with a named volume. Boot with `docker compose up --build`.
 
 ---
 
 ## Endpoint reference
 
-Routes are registered in `internal/handlers/handler.go:46-58` (links + redirect) and `internal/handlers/document.go:33-38` (docs), with the SPA catch-all wired in `cmd/server/main.go:75-78`. Match order matters — gorilla/mux matches in registration order.
+Routes are registered in `internal/adapters/httpapi/links_handler.go:Register` (links + redirect + legacy form) and `internal/adapters/httpapi/docs_handler.go:Register` (docs CRUD), with the SPA catch-all wired in `cmd/server/main.go`. gorilla/mux matches in registration order.
 
 ### `GET /query/{path:.*}` — golink redirect
 
-The contract that justifies a server-side rendered handler. Browser search-engine integrations issue plain HTTP requests; they don't run JavaScript, so this MUST be a 302 from the Go server.
+Server-side 302. The contract is browser-search-engine compatible.
 
-**Flow** (`handler.go:RedirectHandler`):
+**Flow** (`LinksHandler.Redirect`):
 
 1. Strip trailing slash from the captured `path`.
 2. Call `linkService.GetLink(ctx, path, "")`.
 3. On success → `302` to the resolved URL.
-4. On `InvalidQueryError` → `302` to `${BASE_URL}/?missing=<path>` (the SPA picks up the `missing` param and shows a toast).
+4. On `links.InvalidQueryError` → `302` to `${BASE_URL}/?missing=<path>` (the SPA shows a toast).
 5. On any other error → `500`.
 
-**Resolution semantics** (`service/link.go:GetLink`):
+**Resolution semantics** (`core/links.Service.GetLink`):
 
-- Look up `word` in `linktable`. If found:
-  - Log a hit in `queries` (best-effort; logging failure does not fail the request).
-  - If the stored `link` is itself a keyword (not `http(s)://...`), recurse → enables aliases.
+- Look up `word` in the repository. If found:
+  - Log a hit (best-effort; logging failure does not fail the request).
+  - If the stored `link` is itself a keyword (not `http(s)://...`), recurse — enables aliases.
   - If the stored `link` contains `{*}`, substitute the `searchTerm` (URL-encoded).
   - Return the URL.
 - If not found *and* `word` contains spaces, peel the last token off and treat it as a search term (`go google cats` → look up `google cats`, fail, then `google` with searchTerm `cats`).
-- If still not found → return `InvalidQueryError`.
+- If still not found → `links.InvalidQueryError`.
 
 ### `GET /api/links` — list keywords + recent queries
 
-`handler.go:ListLinks`. Returns everything the homepage needs in one call.
+`LinksHandler.List`. One round-trip per homepage render.
 
 ```json
 {
@@ -278,94 +235,106 @@ The contract that justifies a server-side rendered handler. Browser search-engin
 }
 ```
 
-- `keywords` ← `linkService.GetAllKeywords()` → all rows from `linktable` filtered to URL-shaped links (skipping aliases).
-- `recent_queries` ← `linkService.GetRecentQueries()` → top 20 by count over the last 3 days, joined back to `linktable` for the URL.
-- `base_url` ← `cfg.BaseURL`, used by the SPA to display the search-engine URL on the home and setup pages.
+- `keywords` ← `links.Service.GetAllKeywords()` → all rows from `linktable`, deduped to the latest version of each word, filtered to URL-shaped links.
+- `recent_queries` ← `links.Service.GetRecentQueries()` → top 20 by count over the last 3 days, joined back to `linktable` for the URL.
+- `base_url` ← `cfg.BaseURL`, used by the SPA to display the search-engine URL.
 
-### `POST /api/links` — create or update a link
+### `POST /api/links` — create or update
 
-`handler.go:CreateLink`. JSON body: `{"word":"...","link":"..."}`.
+`LinksHandler.Create`. JSON body: `{"word":"...","link":"..."}`.
 
 1. Decode JSON; trim whitespace on both fields.
-2. Call `linkService.UpdateLink`, which validates:
-   - Non-empty `word` and `link`.
-   - `word` does not end in `/`.
-   - `link` starts with `http://` or `https://`.
-   - `link != word` (no self-loops).
-3. Insert a new row into `linktable`.
+2. `links.Service.UpdateLink` validates: non-empty `word` and `link`; `word` doesn't end in `/`; `link` starts with `http://` or `https://`; `link != word`.
+3. Insert via the GORM repository.
 4. Return `{"success": true}` (200) or `400` with the validation message.
 
-### `POST /update/` — legacy form-encoded create
+### `POST /update/` — legacy form-encoded
 
-`handler.go:UpdateLinkLegacy`. Same semantics as `POST /api/links`, but accepts `application/x-www-form-urlencoded` (`word=...&link=...`) and returns plain text `Link added successfully!`. Kept so anyone who configured their browser against the pre-migration `/update/` endpoint still works.
+`LinksHandler.UpdateLegacy`. Same semantics as `POST /api/links`, but accepts `application/x-www-form-urlencoded` and returns plain text. Kept for browsers configured against the pre-migration `/update/` endpoint.
 
 ### `GET /api/docs` — list documents
 
-`document.go:ListDocuments`. Reads `docs/`, returns one entry per `.md` / `.mdx` file. For each file, peeks at the first lines to extract `title` and `description` from YAML frontmatter (`service/document.go:peekFrontmatter`); falls back to the filename without extension. Type is inferred from the extension.
-
-```json
-{ "documents": [ { "title": "...", "description": "...", "type": "markdown|mdx", "path": "sample.md" } ] }
-```
+`DocsHandler.List`. Returns one entry per `.md` / `.mdx` file in `docs/`, with frontmatter title/description peeked from each. Delegates to `core/docs.Service.ListDocuments`, which calls `Store.List` then `Store.Read` for each file to extract metadata.
 
 ### `GET /api/docs/{filename}` — fetch raw source
 
-`document.go:GetDocument`. Returns the full file contents (frontmatter included) plus parsed metadata.
+`DocsHandler.Get`. Returns the full file contents (frontmatter included) plus parsed metadata.
 
 ```json
 {
   "source":   "---\ntitle: ...\n---\n# ...",
   "type":     "markdown|mdx",
-  "metadata": { "title": "...", "description": "...", "type": "...", "path": "...", "metadata": { ...full frontmatter map... } }
+  "metadata": { "title": "...", "description": "...", "type": "...", "path": "...", "metadata": { ... } }
 }
 ```
 
-If the URL omits the extension (`/api/docs/sample`), the handler tries `.md` first, then `.mdx`. 404 if neither exists. The client compiles MDX in the browser (`web/frontend/src/lib/mdx.tsx`), so the server never renders to HTML.
+Extension fallback: if the URL omits `.md`/`.mdx`, the service tries `.md` first then `.mdx`. 404 (mapped from `docs.ErrNotFound`) if neither exists.
 
-### `POST /api/docs` — upload a document
+### `POST /api/docs` — upload
 
-`document.go:UploadDocument`. `multipart/form-data` with field `file`.
+`DocsHandler.Upload`. `multipart/form-data` with field `file`.
 
 1. Parse multipart form (10 MB limit).
-2. Reject files whose name doesn't end in `.md` or `.mdx`.
-3. Sanitize the filename via `filepath.Base` (no path traversal) and write into `docs/`.
-4. Return `{success, filename, message, url}` (the `url` is `/docs/{filename}` — a SPA route, not an API route).
+2. Reject filenames not ending in `.md` or `.mdx`.
+3. Delegate to `core/docs.Service.SaveDocument` → `filesystem.DocStore.Write` (which sanitises via `filepath.Base`).
+4. Return `{success, filename, message, url}`.
 
-⚠️ **No authentication.** With runtime MDX compilation, an unauthenticated upload is effectively a stored XSS / RCE-in-the-browser vector. Gate this behind auth or restrict uploads to `.md` before public deployment.
+⚠️ **No authentication.** With runtime MDX compilation, an unauthenticated upload is effectively stored-XSS. Gate behind auth or restrict uploads to `.md` before public deployment.
 
-### `DELETE /api/docs/{filename}` — delete a document
+### `DELETE /api/docs/{filename}` — delete
 
-`document.go:DeleteDocument`. Sanitize via `filepath.Base`, `os.Remove`. Returns `{success, message}` or 500.
+`DocsHandler.Delete`. `filesystem.DocStore.Delete` returns `docs.ErrNotFound` for missing files (mapped to 404).
 
-### `GET /` and `GET /<anything-else>` — embedded SPA
+### `GET /` and unknown routes — embedded SPA
 
-The catch-all (`cmd/server/main.go`) hands the request to `frontend.Handler("api", "query")`. Behaviour described in the **`web/frontend/embed.go`** section above.
+The catch-all hands the request to `frontend.Handler("api", "query")`. Behaviour described under "web/frontend/embed.go" above.
 
 ---
 
 ## Configuration
 
-Loaded by `internal/config/config.go`. All env vars optional; defaults shown.
+Loaded by `internal/platform/config/config.go`. All env vars optional; defaults shown.
 
-| Variable        | Default                  | Used by                                                  |
-| --------------- | ------------------------ | -------------------------------------------------------- |
-| `PORT`          | `8080`                   | `cmd/server/main.go` server bind                         |
-| `DATABASE_PATH` | `golinks.db`             | `database.NewSQLiteDB`                                   |
-| `BASE_URL`      | `http://localhost:8080`  | Returned in `/api/links` and used in 302 fallback target |
-| `ENVIRONMENT`   | `development`            | Logged on startup; reserved for future env-aware logic   |
-| `LOG_LEVEL`     | `info`                   | `logger.Config.Level`                                    |
+| Variable          | Default                  | Used by                                                                |
+| ----------------- | ------------------------ | ---------------------------------------------------------------------- |
+| `PORT`            | `8080`                   | HTTP server bind                                                       |
+| `BASE_URL`        | `http://localhost:8080`  | Returned in `/api/links`; used in 302 fallback target                  |
+| `ENVIRONMENT`     | `development`            | Logged on startup; reserved for future env-aware logic                 |
+| `LOG_LEVEL`       | `info`                   | `logger.Config.Level`                                                  |
+| `DATABASE_DRIVER` | `sqlite`                 | `database.OpenGorm` dispatch (`sqlite` or `postgres`)                  |
+| `DATABASE_URL`    | derived from `DATABASE_PATH` when empty and driver=sqlite | Connection string passed straight to GORM |
+| `DATABASE_PATH`   | `golinks.db`             | Deprecated. Used to synthesise `DATABASE_URL` when it's empty (sqlite) |
 
-`.env` at the repo root is auto-loaded if present (godotenv). See `env.example`.
+`.env` at the repo root is auto-loaded if present. See `.env.example` for the canonical template.
+
+---
+
+## Database schema
+
+Created and managed by Goose. Migrations live in a single folder at `internal/adapters/persistence/migrations/` and are written as Go functions that delegate schema work to GORM — one set of code, two backends. Dialect-specific SQL (autoincrement vs. `BIGSERIAL`, `DATETIME` vs. `TIMESTAMP WITH TIME ZONE`, reserved-word quoting) is generated by GORM's dialector at apply time.
+
+| Table         | Columns                                                          | Notes                                          |
+| ------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
+| `linktable`   | `id`, `word`, `link`, `user`, `created_at`                       | Multiple rows per word allowed; latest wins.   |
+| `queries`     | `query_id`, `word_id` → `linktable.id`, `created_at`             | Hit log.                                       |
+| `tags`        | `id`, `word_id` → `linktable.id`, `tag`                          | Reserved; not yet used by the app.             |
+| `goose_db_version` | (Goose-managed)                                              | Migration bookkeeping.                         |
+
+Foreign keys are declared with `ON DELETE RESTRICT ON UPDATE RESTRICT`. SQLite enforces them because the connection enables `_pragma=foreign_keys(1)`.
+
+Indexes:
+- `idx_linktable_word` on `linktable.word`
+- `idx_queries_word_id` on `queries.word_id`
+- `idx_queries_created_at` on `queries.created_at`
 
 ---
 
 ## Security & known TODOs
 
-- **`POST /api/docs` is unauthenticated.** Combined with runtime MDX compilation, this is the highest-risk gap in the codebase. Mitigations: gate behind a shared token, require auth, or restrict uploads to `.md`.
+- **`POST /api/docs` is unauthenticated.** Combined with runtime MDX compilation, this is the highest-risk gap. Mitigations: gate behind a token, require auth, or restrict uploads to `.md`.
 - **No CSRF protection** on `POST /api/links` or `/update/`. Acceptable for a single-user tool on localhost; revisit if exposed publicly.
-- **`getUserID` returns `"DefaultUser"`** unconditionally (`handler.go:getUserID`). Real auth never landed; the `user` column in `linktable` is a placeholder.
+- **`getUserID` returns `"DefaultUser"`** unconditionally (`internal/adapters/httpapi/helpers.go`). Real auth never landed; the `user` column is a placeholder.
 
 ## Future / aspirational
 
-The `pkg/`, `api/`, `configs/`, and `test/` directories from typical Go layouts are **not** present — this repo doesn't need them yet. Add them only when there's a concrete reason (shared utilities consumed by another binary, gRPC API definitions, etc.).
-
-OpenTelemetry, distributed rate-limiting, retry/backoff for external calls, circuit breakers — none are wired today and none should be added speculatively. The current scope is a single-instance tool with one external dependency (SQLite).
+OpenTelemetry, distributed rate-limiting, retry/backoff, circuit breakers — none are wired today and none should be added speculatively. The current scope is a single-instance tool with one external dependency at most (Postgres, when chosen).

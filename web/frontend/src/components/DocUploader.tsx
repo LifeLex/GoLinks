@@ -39,9 +39,10 @@ export function DocUploader() {
         variant="outline"
         onClick={() => inputRef.current?.click()}
         disabled={mutation.isPending}
+        className="shrink-0 font-mono text-xs uppercase tracking-[0.14em]"
       >
         <Upload className="h-4 w-4" />
-        {mutation.isPending ? "Uploading…" : "Upload .md / .mdx"}
+        {mutation.isPending ? "Uploading…" : "Upload"}
       </Button>
     </>
   );

@@ -1,0 +1,48 @@
+GoLinks ({{ include "golinks.fullname" . }}) has been deployed. 🎉
+
+{{- if .Values.ingress.enabled }}
+
+Access it at:
+{{- range .Values.ingress.hosts }}
+{{- $scheme := "http" }}
+{{- if $.Values.ingress.tls }}{{ $scheme = "https" }}{{ end }}
+  {{ $scheme }}://{{ .host }}
+{{- end }}
+{{- else }}
+
+It is exposed via a {{ .Values.service.type }} Service. To reach it locally:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "golinks.fullname" . }} 8080:{{ .Values.service.port }}
+  curl http://localhost:8080{{ .Values.probes.healthPath }}     # -> {"status":"ok"}
+  open http://localhost:8080
+{{- end }}
+
+Run the bundled smoke test any time with:
+
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+
+──────────────────────────────────────────────────────────────────────────────
+{{- if ne (int .Values.replicaCount) 1 }}
+
+⚠  replicaCount is set to {{ .Values.replicaCount }}, but GoLinks uses SQLite and
+   CANNOT scale horizontally. The Deployment was rendered with replicas: 1.
+{{- end }}
+{{- if and .Values.ingress.enabled .Values.ingress.hosts }}
+{{- $host := (index .Values.ingress.hosts 0).host }}
+{{- if not (contains $host .Values.config.baseUrl) }}
+
+⚠  config.baseUrl ({{ .Values.config.baseUrl | quote }}) does not match your Ingress
+   host ({{ $host | quote }}). GoLinks builds redirects from baseUrl, so set it to
+   the external URL, e.g.  --set config.baseUrl=https://{{ $host }}
+{{- end }}
+{{- end }}
+{{- if eq .Values.image.repository "your-registry.example.com/golinks" }}
+
+⚠  image.repository is still the placeholder. Override it before a real install:
+   --set image.repository=<your-registry>/golinks --set image.tag=<tag>
+{{- end }}
+
+🔒 Security: POST /api/docs (document upload) is UNAUTHENTICATED and runtime MDX is
+   evaluated in the viewer's browser. Do not expose this publicly without an auth
+   layer (e.g. an ingress auth annotation or oauth2-proxy in front).
+──────────────────────────────────────────────────────────────────────────────

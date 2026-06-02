@@ -1,9 +1,7 @@
-@import "@fontsource/inter/300.css";
-@import "@fontsource/inter/400.css";
-@import "@fontsource/inter/500.css";
-@import "@fontsource/inter/600.css";
+@import "@fontsource-variable/archivo/standard.css";
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
 @import "highlight.js/styles/github.css";
 
 @tailwind base;
@@ -12,41 +10,47 @@
 
 @layer base {
   :root {
-    /* Rams-inspired palette ported to shadcn HSL tokens.
-       Originals kept as reference in the comments. */
+    /* ─────────────────────────────────────────────────────────────
+       Braun Functionalism palette — Dieter Rams' instrument language.
+       Warm paper base, ink charcoal, ONE functional accent (orange).
+       Everything else is honest greyscale; orange is reserved as a
+       signal, never decoration.
+       ───────────────────────────────────────────────────────────── */
 
-    --background: 0 0% 98%;             /* rams-off-white #FAFAFA */
-    --foreground: 0 0% 20%;             /* rams-charcoal  #333333 */
+    --background: 40 16% 95%;           /* warm paper  ~#F4F1EA */
+    --foreground: 24 9% 12%;            /* ink charcoal ~#211E1B */
 
-    --card: 0 0% 100%;                  /* rams-white */
-    --card-foreground: 0 0% 10%;        /* rams-black */
+    --card: 40 30% 99%;                 /* warm white panel */
+    --card-foreground: 24 10% 10%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 10%;
+    --popover: 40 30% 99%;
+    --popover-foreground: 24 10% 10%;
 
-    --primary: 14 100% 60%;             /* rams-orange   #FF6B35 — Braun accent */
-    --primary-foreground: 0 0% 100%;
+    --primary: 16 92% 52%;              /* Braun orange — the only accent */
+    --primary-foreground: 40 40% 98%;
 
-    --secondary: 0 0% 90%;              /* rams-light-grey */
-    --secondary-foreground: 0 0% 20%;
+    --secondary: 38 12% 89%;            /* warm light grey */
+    --secondary-foreground: 24 9% 18%;
 
-    --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 40%;       /* rams-dark-grey */
+    --muted: 40 12% 92%;
+    --muted-foreground: 30 5% 42%;
 
-    --accent: 221 83% 53%;              /* rams-blue     #2563EB — for links/focus */
-    --accent-foreground: 0 0% 100%;
+    /* Repointed to ink: Rams reserves a single accent, so "accent"
+       is monochrome and orange does the signalling. */
+    --accent: 24 9% 16%;
+    --accent-foreground: 40 40% 98%;
 
-    --destructive: 0 72% 51%;           /* rams-red      #DC2626 */
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 6 68% 47%;
+    --destructive-foreground: 40 40% 98%;
 
-    --success: 162 94% 30%;             /* rams-green    #059669 */
-    --success-foreground: 0 0% 100%;
+    --success: 150 42% 30%;
+    --success-foreground: 40 40% 98%;
 
-    --border: 0 0% 90%;                 /* rams-light-grey */
-    --input: 0 0% 80%;                  /* rams-medium-grey */
-    --ring: 14 100% 60%;                /* rams-orange */
+    --border: 36 12% 85%;               /* hairline */
+    --input: 32 10% 76%;
+    --ring: 16 92% 52%;
 
-    --radius: 0.25rem;                  /* 4px — rams-radius-md */
+    --radius: 0.25rem;                  /* 4px — Rams restraint */
   }
 }
 
@@ -55,21 +59,68 @@
     @apply border-border;
   }
 
-  body {
-    @apply bg-background text-foreground font-sans antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1;
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
-  /* Rams-flavoured prose overrides for MDX-rendered docs.
-     We keep the accent orange for link hover and use the mono font for code. */
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "ss01" 1, "cv01" 1, "calt" 1;
+    /* Faint engineering dot-grid — graph-paper atmosphere under the UI. */
+    background-image: radial-gradient(
+      hsl(var(--foreground) / 0.05) 1px,
+      transparent 1px
+    );
+    background-size: 22px 22px;
+    background-position: -1px -1px;
+  }
+
+  /* Tabular, lining figures everywhere numbers carry meaning. */
+  .tnum {
+    font-feature-settings: "tnum" 1, "lnum" 1;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* Expanded grotesque — the "device panel" display treatment. */
+  .display {
+    font-stretch: 118%;
+    letter-spacing: -0.02em;
+    font-feature-settings: "ss01" 1;
+  }
+
+  /* Silkscreened control label — the mono caps used on Braun fascia. */
+  .label-mono {
+    @apply font-mono text-[0.6875rem] font-medium uppercase text-muted-foreground;
+    letter-spacing: 0.18em;
+  }
+
+  /* Hairline panel: the basic unit of the instrument grid. */
+  .panel {
+    @apply border border-border bg-card;
+  }
+}
+
+@layer base {
+  /* ── Rams-flavoured prose for MDX docs ───────────────────────────
+     Links are ink by default with a hairline underline; orange only
+     on hover. Code uses the mono control type. */
   .prose :where(a):not(:where([class~="not-prose"] *)) {
-    @apply text-accent no-underline font-medium;
+    @apply text-foreground font-medium no-underline;
+    text-decoration: underline;
+    text-decoration-color: hsl(var(--border));
+    text-underline-offset: 3px;
+    transition: color 0.15s ease, text-decoration-color 0.15s ease;
   }
   .prose :where(a):not(:where([class~="not-prose"] *)):hover {
-    @apply text-primary underline;
+    @apply text-primary;
+    text-decoration-color: hsl(var(--primary));
   }
   .prose :where(code):not(:where([class~="not-prose"] *)) {
-    @apply font-mono text-sm bg-secondary border border-input rounded-sm px-1 py-0.5;
+    @apply font-mono text-[0.85em] bg-secondary border border-border rounded-sm px-1 py-0.5;
   }
   .prose :where(code):not(:where([class~="not-prose"] *))::before,
   .prose :where(code):not(:where([class~="not-prose"] *))::after {
@@ -82,9 +133,19 @@
     @apply bg-transparent border-0 p-0 text-sm;
   }
   .prose :where(h1, h2, h3, h4):not(:where([class~="not-prose"] *)) {
-    @apply font-medium tracking-tight text-foreground;
+    @apply font-semibold tracking-tight text-foreground;
   }
   .prose :where(h1):not(:where([class~="not-prose"] *)) {
-    @apply font-light;
+    @apply font-bold;
+    font-stretch: 112%;
+    letter-spacing: -0.02em;
+  }
+  /* Orange tick before headings — Braun manual styling. */
+  .prose :where(h2):not(:where([class~="not-prose"] *)) {
+    @apply relative pl-4;
+  }
+  .prose :where(h2):not(:where([class~="not-prose"] *))::before {
+    content: "";
+    @apply absolute left-0 top-[0.35em] h-[0.7em] w-1 bg-primary;
   }
 }

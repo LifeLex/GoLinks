@@ -55,28 +55,69 @@ func main() {
 	appLogger.Info("Initializing repositories")
 	shortcutRepo := repository.NewShortcutRepository(db, appLogger)
 	queryRepo := repository.NewQueryRepository(db, appLogger)
+	userRepo := repository.NewUserRepository(db, appLogger)
+	sessionRepo := repository.NewSessionRepository(db, appLogger)
 
 	// Initialize services
 	appLogger.Info("Initializing services")
 	linkService := service.NewLinkService(shortcutRepo, queryRepo, appLogger)
 	docService := service.NewDocumentService("docs", appLogger)
+	authService := service.NewAuthService(
+		userRepo, sessionRepo, appLogger,
+		time.Duration(cfg.Auth.SessionTTLHours)*time.Hour,
+		cfg.Auth.BcryptCost, cfg.Auth.MinPasswordLen,
+	)
 
 	// Initialize handlers
 	appLogger.Info("Initializing handlers")
 	handler := handlers.NewHandler(linkService, cfg, appLogger)
 	docHandler := handlers.NewDocumentHandler(docService, appLogger)
+	authHandler := handlers.NewAuthHandler(authService, cfg, appLogger)
+	authMiddleware := handlers.NewAuthMiddleware(authService, appLogger)
 
-	// Setup router
+	// Setup router. A global Authenticate middleware loads the optional user
+	// into every request's context; per-route gating is done via subrouters.
 	appLogger.Info("Setting up HTTP router")
 	router := mux.NewRouter()
+	router.Use(authMiddleware.Authenticate)
 
-	handler.RegisterRoutes(router)
-	docHandler.RegisterRoutes(router)
+	// Subrouters carry their own middleware. Routes registered on `authed`
+	// require a logged-in user; routes on `admin` require the admin role.
+	// Method-specific routes (GET on public, POST on authed for the same path)
+	// coexist because mux matches by method.
+	authed := router.NewRoute().Subrouter()
+	authed.Use(authMiddleware.RequireAuth)
+	admin := router.NewRoute().Subrouter()
+	admin.Use(authMiddleware.RequireAdmin)
+
+	handler.RegisterRoutes(router, authed)
+	docHandler.RegisterRoutes(router, admin)
+	authHandler.RegisterRoutes(router, admin)
 
 	// Catch-all: serve the embedded SPA for every unmatched GET.
-	// Reserved prefixes guarantee we never shadow API/redirect routes even if
-	// the router's match order changes.
-	router.PathPrefix("/").Handler(frontend.Handler("api", "query"))
+	// Reserved prefixes guarantee we never shadow API/redirect/auth routes even
+	// if the router's match order changes.
+	router.PathPrefix("/").Handler(frontend.Handler("api", "query", "auth"))
+
+	// Periodically purge expired sessions.
+	stopCleanup := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if n, err := authService.PurgeExpiredSessions(context.Background()); err != nil {
+					appLogger.Error("Session cleanup failed: %v", err)
+				} else if n > 0 {
+					appLogger.Info("Purged %d expired sessions", n)
+				}
+			case <-stopCleanup:
+				return
+			}
+		}
+	}()
+	defer close(stopCleanup)
 
 	// Setup server
 	server := &http.Server{

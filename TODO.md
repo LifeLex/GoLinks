@@ -1,63 +1,102 @@
 # TODO
 
-Roadmap for GoLinks. Items are grouped by theme and ordered roughly by dependency — top sections unblock lower ones. Each item has a short scope line so Claude (or future-you) can pick one up without re-deriving context. See `ARCHITECTURE.md` for the underlying design and `CLAUDE.md` for conventions.
+Tactical task list for GoLinks, ordered to match the phases in [`ROADMAP.md`](./ROADMAP.md). Each item has a short scope line so Claude (or future-you) can pick one up without re-deriving context. See `ARCHITECTURE.md` for the underlying design and `CLAUDE.md` for conventions.
 
-## Suggested order
-
-1. **MCP server (Phase 1)** — independent, ships immediate value, can run before broader auth via a shared bearer token.
-2. **Authentication** — unblocks the MDX upload security gap and is required for everything below.
-3. **Authorization & roles** — depends on auth.
-4. **Admin features** (edit/delete UI, request/approval flow) — depend on roles.
-5. **Tooling** (migrations library) and **independent features** (dark mode, doc analytics) — do whenever.
+Phase 1 ships v1.0. Phase 2 ships one tracer-bullet per wedge to gather adoption signal. Phase 3 is gated on that signal — don't start it yet.
 
 ---
 
-## MCP server — Phase 1 (GoLinks-native)
+## Phase 1 — Foundations (blocks v1.0)
 
-The aim: let agents resolve, search, read, and create golinks via MCP. **Phase 1 only exposes GoLinks' own data (`linktable` + `docs/`).** Federated search across third-party sources is intentionally a Phase 2 decision, gated on real usage gaps observed after Phase 1 ships — see *Open questions* below.
+### Search + tags  ← **start here**
 
-- [ ] **Add `internal/mcp/` server package.** Use `github.com/mark3labs/mcp-go` for protocol plumbing (HTTP-streamable transport, since this is team-shared). Reuse the existing `LinkService` and `DocumentService` — no business logic in the MCP layer.
-- [ ] **`MCP_TOKEN` bearer middleware.** Read from env, validate `Authorization: Bearer <token>` on every MCP request. Reject with 401 on miss. Document in `env.example`.
+The highest-leverage foundation: it makes the tool browsable past ~50 links, activates the dormant `tags` table, and the FTS5 index it builds is reused by the MCP and docs-RAG breadcrumbs in Phase 2.
+
+- [ ] **FTS5 index over `linktable`.** New migration: a virtual table mirroring `word + link` (+ `tag` once tags land), with INSERT/UPDATE/DELETE triggers to keep it in sync.
+- [ ] **Wire up the `tags` table.** It exists in the schema (`internal/database/sqlite.go`) but nothing reads or writes it. Add repository methods (`AddTag`, `GetTags`, `GetByTag`) and surface tags on the link create/edit path.
+- [ ] **`GET /api/search?q=&limit=`** — FTS5 query across word + link + tags. Returns `[{word, link, tags, score}]`. New handler + service method; validate/trim `q` at the boundary.
+- [ ] **Search UI.** A search box on the homepage that filters the keyword table via the new endpoint. Use `useSearchParams` so `?q=` is deep-linkable (per `CLAUDE.md` routing convention).
+- [ ] **Tests.** Table-driven: FTS sync on insert/update/delete, search ranking, empty-query and no-results paths.
+
+### Authentication & authorization
+
+- [x] **Authentication.** Email+password with bcrypt; server-side sessions (SHA-256-hashed opaque token in an HttpOnly `SameSite=Lax` cookie). First user on an empty DB becomes admin via `/auth/setup`; registration is closed thereafter. `getUserID` now reads the user from request context (set by the `Authenticate` middleware). Closes the runtime MDX upload risk.
+- [x] **Authorization with roles.** `admin` and `user` roles. A global `Authenticate` middleware loads the optional user; `RequireAuth`/`RequireAdmin` subrouters gate writes. Reads stay public; `POST /api/links` + legacy `/update/` require auth; `POST/DELETE /api/docs` require admin. Minimal admin user management at `/api/users` + `/admin/users`.
+
+### Admin & management UI
+
+- [ ] **Edit & delete UI for golinks.** Today the homepage only adds. Add row-level edit and delete actions in `web/frontend/src/components/KeywordTable.tsx`. Backend: `PATCH /api/links/{word}` and `DELETE /api/links/{word}`. _Depends on authorization (admin-only)._
+- [ ] **Keyword-request workflow.** Non-admins propose new golinks; admins approve or reject. Add a `status` column to `linktable` (`proposed`/`approved`/`rejected`) or a `link_requests` table that promotes on approval. New API endpoints; new admin view in the SPA. _Depends on authorization._
+
+### First-run experience
+
+- [ ] **Setup / onboarding polish.** Make the first run good: sample links seeded on an empty DB, the search-engine setup instructions front-and-center, a health/status page. This is what decides whether a self-hoster sticks.
+- [ ] **(Stretch) Browser extension.** A thin extension that registers the `go` keyword automatically instead of manual per-browser search-engine config.
+
+### Analytics
+
+- [ ] **Surface golink analytics.** The `queries` table already records hits — expose trends (top links, recent activity) beyond the current "recent queries" list.
+- [ ] **Document access analytics.** Mirror the pattern for docs: add a `doc_views` table (or extend `queries`), record a row in `DocumentHandler.GetDocument`, expose `GetPopularDocs` via service + `/api/docs/popular`. Surface "Recently viewed" on `/docs`.
+
+### Project hygiene
+
+- [ ] **Versioned migrations.** Switch from the inline string slice in `internal/database/sqlite.go:Migrate` to `goose` (or `golang-migrate`). Matters once auth tables + FTS5 + analytics land.
+- [ ] **Dark mode.** shadcn theming is already token-driven — add a `.dark` block in `web/frontend/src/index.css` overriding the HSL variables. Toggle in the navbar; persist in `localStorage`; respect `prefers-color-scheme` on first visit.
+- [ ] **Hardening + CI polish + contributor docs.** Rate-limit writes, CONTRIBUTING.md, issue/PR templates — the table-stakes for an OSS release.
+
+---
+
+## Phase 2 — Wedge breadcrumbs (after v1.0 ships)
+
+One small tracer-bullet per wedge, shipped together, instrumented to compare adoption. **Do not over-build any of these** — they exist to gather signal.
+
+### AI breadcrumb — MCP server (GoLinks-native)
+
+Let agents resolve, search, read, and create golinks via MCP over **GoLinks' own data only** (`linktable` + `docs/`). Federated third-party search is a Phase 3 decision (see *Open questions*).
+
+- [ ] **Add `internal/mcp/` server package.** Use `github.com/mark3labs/mcp-go` for protocol plumbing (HTTP-streamable transport, since this is team-shared). Reuse `LinkService` and `DocumentService` — no business logic in the MCP layer.
+- [ ] **`MCP_TOKEN` bearer middleware.** Read from env, validate `Authorization: Bearer <token>` on every MCP request. 401 on miss. Document in `env.example`.
 - [ ] **Mount at `/mcp`** in `cmd/server/main.go` after `/api/*` and before the SPA catch-all. Add `mcp` to the `frontend.Handler` reserved-prefix list.
-- [ ] **FTS5 index over `linktable`.** New migration: virtual table mirroring `word + link`, with INSERT/UPDATE/DELETE triggers to keep it in sync. Required for `search_golinks`.
-- [ ] **FTS5 index over `docs/`.** Built on startup, updated on upload and delete in `DocumentService`. Strip frontmatter before indexing. Required for `search_docs`.
-- [ ] **Tool: `resolve_golink(word: string)`** — wraps `LinkService.GetLink`. Returns `{url}` on hit, error on miss.
-- [ ] **Tool: `search_golinks(query: string, limit?: int = 10)`** — FTS5 query over `linktable`. Returns `[{word, link, score}]`.
-- [ ] **Tool: `list_golinks(limit?: int = 100, offset?: int = 0)`** — wraps `LinkService.GetAllKeywords` with pagination. Returns `[{word, link, created_at}]`.
-- [ ] **Tool: `search_docs(query: string, limit?: int = 10)`** — FTS5 query over the docs index. Returns `[{filename, title, snippet, score}]`.
-- [ ] **Tool: `fetch_doc(filename: string)`** — wraps `DocumentService.GetDocument`. Returns `{source, type, metadata}`.
-- [ ] **Tool: `create_golink(word: string, url: string)`** — wraps `LinkService.UpdateLink`. Returns `{success}` or validation error.
-- [ ] **Smoke tests in `internal/mcp/server_test.go`** — table-driven, with the same mock pattern as `handler_test.go`. Cover: token rejection, each tool happy path, search with no results, validation errors.
-- [ ] **Update `ARCHITECTURE.md`** with the `/mcp` endpoint, tool catalog, and the Phase 1/Phase 2 scope decision. Update `CLAUDE.md`'s endpoint list and add a short "MCP conventions" section.
-- [ ] **Update `README.md`** with a "Connecting an agent" section: example MCP client config (Claude Desktop / Claude Code) using `MCP_TOKEN`.
+- [ ] **FTS5 index over `docs/`.** Built on startup, updated on upload and delete in `DocumentService`. Strip frontmatter before indexing. (The `linktable` FTS5 index already exists from Phase 1.)
+- [ ] **Tool: `resolve_golink(word)`** — wraps `LinkService.GetLink`. Returns `{url}` on hit, error on miss.
+- [ ] **Tool: `search_golinks(query, limit=10)`** — reuses the Phase 1 FTS5 search.
+- [ ] **Tool: `list_golinks(limit=100, offset=0)`** — wraps `LinkService.GetAllKeywords` with pagination.
+- [ ] **Tool: `search_docs(query, limit=10)`** — FTS5 over the docs index.
+- [ ] **Tool: `fetch_doc(filename)`** — wraps `DocumentService.GetDocument`.
+- [ ] **Tool: `create_golink(word, url)`** — wraps `LinkService.UpdateLink`. _Admin-gated once auth lands._
+- [ ] **Smoke tests in `internal/mcp/server_test.go`** — same mock pattern as `handler_test.go`. Cover token rejection, each tool happy path, no-results, validation errors.
+- [ ] **Docs.** `ARCHITECTURE.md` (the `/mcp` endpoint + tool catalog), `CLAUDE.md` (endpoint list + "MCP conventions"), `README.md` ("Connecting an agent" with example client config).
 
-## Authentication & authorization
+### Docs breadcrumb — semantic fallback
 
-- [ ] **Authentication.** Pick an approach and implement it: (a) proprietary email+password with bcrypt, (b) OAuth via GitHub/Google, (c) shared session token. Today `getUserID` in `internal/handlers/handler.go` returns `"DefaultUser"` unconditionally — replace it with a real identity lookup. Blocks the runtime MDX upload risk flagged in `ARCHITECTURE.md` and `CLAUDE.md`.
-- [ ] **Authorization with roles.** Two roles to start: `admin` (full CRUD on golinks and docs) and `user` (read, search, propose). Gate `POST /api/links`, `POST /api/docs`, `DELETE /api/docs/*`, and `create_golink` MCP tool on `admin`. _Depends on authentication._
+- [ ] **Docs-as-fallback on a missed keyword.** When `/query/{word}` misses, run a docs search and, if there's a strong hit, redirect to it (or to a disambiguation page) instead of the bare `?missing=` toast. Reuses the Phase 1/MCP FTS5 docs index — keep it keyword-based for the breadcrumb; embeddings are Phase 3.
 
-## Tooling
+### DX breadcrumb — zero-config install
 
-- [ ] **Switch to `goose` (or `golang-migrate`).** Migrations today are an inline string slice in `internal/database/sqlite.go:Migrate`. As the schema grows (auth tables, FTS5, doc analytics), versioned migration files become important for safe rollback and review.
+- [ ] **One-command install + zero-config first run.** A single `curl | sh` (or `docker run`) that produces a working instance with sample data, an auto-generated config, and a clear health page. Measures whether "easiest to self-host" is the wedge people care about.
 
-## Features
+---
 
-- [ ] **Dark mode.** shadcn theming is already token-driven — add a `.dark` block in `web/frontend/src/index.css` overriding the HSL variables. Toggle via a `<button>` in the navbar; persist in `localStorage`; respect `prefers-color-scheme` on first visit. (Replaces the older "theme customization" item — full per-user themes is overkill at this stage.)
-- [ ] **Document access analytics.** The `queries` table tracks golink hits. Mirror the pattern for docs: add a `doc_views` table (or extend `queries`), record a row in `DocumentHandler.GetDocument`, expose `GetPopularDocs` via service + `/api/docs/popular` endpoint. Surface "Recently viewed" on `/docs` in the SPA.
-- [ ] **Edit & delete UI for golinks.** Today the homepage only adds. Add row-level edit and delete actions on the keyword table in `web/frontend/src/components/KeywordTable.tsx`. Backend: new `PATCH /api/links/{word}` and `DELETE /api/links/{word}` handlers. _Depends on authorization (admin-only)._
-- [ ] **Keyword-request workflow.** Non-admins propose new golinks; admins approve or reject. Either add a `status` column to `linktable` (`proposed` / `approved` / `rejected`) or a new `link_requests` table that promotes to `linktable` on approval. New API endpoints; new admin view in the SPA. _Depends on authorization._
+## Phase 3 — Wedge expansion (gated on Phase 2 signal — do not start yet)
+
+Pick up only after Phase 2 adoption data points to a winner. Illustrative:
+
+- **AI:** natural-language link creation, fuzzy/LLM resolution, federated MCP search, link-rot detection with suggested fixes.
+- **Docs:** embeddings + vector search (sqlite-vec or a real vector DB), RAG answers over docs, doc versioning.
+- **DX:** multi-arch releases, Helm chart, Terraform module, admin TUI.
+
+---
 
 ## Open questions (not yet actionable)
 
-- **MCP Phase 2 — federated search.** Whether to add adapters for third-party sources (Confluence, Notion, Drive, Slack) is intentionally deferred. Decide after Phase 1 has been used for a few weeks: track which agent queries Phase 1 *can't* answer, and pick the highest-demand source first. Designing a generic `Source` interface before having two real adapters is premature.
-- **Deployment target.** If/when GoLinks needs to run somewhere other than localhost, the single-binary + SQLite stack fits Cloud Run (with a mounted volume), Fly.io, or a Docker-on-VM setup well. Google App Engine Standard is a poor fit because of CGO requirements (`mattn/go-sqlite3`); App Engine Flexible / Cloud Run is fine but the persistent-disk story needs explicit thought. Pick a target before adding deployment automation.
+- **MCP Phase 3 — federated search.** Adapters for Confluence/Notion/Drive/Slack are deferred. Decide after the MCP breadcrumb has run for a few weeks: track which agent queries it *can't* answer, pick the highest-demand source first. Designing a generic `Source` interface before two real adapters exist is premature.
+- **Deployment target.** Single-binary + SQLite fits Cloud Run (mounted volume), Fly.io, or Docker-on-VM. App Engine Standard is a poor fit (CGO via `mattn/go-sqlite3`); Cloud Run / App Engine Flexible work but the persistent-disk story needs thought. Pick a target before adding deployment automation.
 
-## Decisions (removed from prior list)
+## Decisions (recorded so they don't reappear without fresh discussion)
 
-Recording these so they don't reappear without a fresh discussion:
-
-- ~~**Postgres support.**~~ Contradicts the single-binary embed architecture chosen during the React migration. The repository interfaces (`ShortcutRepository`, `QueryRepository`) already isolate storage, so plugging in a Postgres backend later is a code change, not an architecture change. SQLite is the right default for single-instance deployment. Revisit only if multi-instance is a real requirement.
-- ~~**ORM.**~~ Plain `database/sql` is the explicit convention (see `CLAUDE.md` "Rely on stable, minimal third-party libraries"). Adding GORM/ent/Bun would invert that.
+- **Wedge: undecided by design.** Revisit after Phase 2. See `ROADMAP.md`.
+- **Search: interim `LIKE`/`ILIKE`, native FTS later.** SQLite FTS5 skipped — it needs a `sqlite_fts5` build tag in every build/test/run path and would be discarded on the Postgres move. `LIKE` is portable (SQLite `LIKE` ↔ Postgres `ILIKE`) and fast enough at this scale. Write the interim search to keep the swap clean.
+- **Postgres: planned, gated on multi-instance.** *(Changed from "deferred, not rejected" — we now intend to migrate.)* Single-binary + SQLite stays the default until multi-instance is real. Repository interfaces already isolate storage → repo/database-layer change, not architecture. Rides with it: native Postgres FTS (replaces interim `LIKE`) and the data-access tooling decision below.
+- **Data-access tooling: revisit at Postgres-migration time.** Plain `database/sql` (no ORM) is today's convention and stays for now. The migration's `?`→`$1` placeholder rewrite is the trigger to reconsider. Leading candidate **`sqlc`** (SQL-first, type-safe codegen, dialect-aware) over a full ORM. **Do not adopt now** — decide when the migration is scoped.
 - ~~**Render Markdown and MDX.**~~ Done — markdown via `remark-gfm`, real MDX via runtime `@mdx-js/mdx evaluate()` in `web/frontend/src/lib/mdx.tsx`.
-- ~~**Generic "user administration".**~~ Subsumed by **Authentication** + **Authorization** above.
-- ~~**Deploy on Google App Engine specifically.**~~ See *Open questions*.
+- ~~**Generic "user administration".**~~ Subsumed by Authentication + Authorization.

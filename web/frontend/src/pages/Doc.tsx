@@ -17,45 +17,54 @@ export function DocPage() {
   });
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
-      <Button variant="ghost" size="sm" asChild>
-        <Link to="/docs">
-          <ArrowLeft className="h-4 w-4" />
-          All documents
-        </Link>
-      </Button>
+    <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6 sm:py-16">
+      <div className="space-y-8">
+        <Button
+          variant="ghost"
+          size="sm"
+          asChild
+          className="-ml-2 font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground"
+        >
+          <Link to="/docs">
+            <ArrowLeft className="h-4 w-4" />
+            All documents
+          </Link>
+        </Button>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertTitle>Document not found</AlertTitle>
-          <AlertDescription>
-            {error instanceof Error ? error.message : String(error)}
-          </AlertDescription>
-        </Alert>
-      )}
+        {error && (
+          <Alert variant="destructive">
+            <AlertTitle>Document not found</AlertTitle>
+            <AlertDescription>
+              {error instanceof Error ? error.message : String(error)}
+            </AlertDescription>
+          </Alert>
+        )}
 
-      {isLoading && (
-        <div className="space-y-3">
-          <Skeleton className="h-8 w-2/3" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-5/6" />
-        </div>
-      )}
+        {isLoading && (
+          <div className="space-y-3">
+            <Skeleton className="h-9 w-2/3" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-5/6" />
+          </div>
+        )}
 
-      {data && (
-        <>
-          <header className="space-y-1 border-b border-border pb-4">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">
-              {data.metadata.type}
+        {data && (
+          <>
+            <header className="animate-rise space-y-3 border-b border-border pb-6">
+              <div className="label-mono text-primary">{data.metadata.type}</div>
+              <h1 className="display text-4xl font-bold tracking-tight">{data.metadata.title}</h1>
+              {data.metadata.description && (
+                <p className="text-base leading-relaxed text-muted-foreground">
+                  {data.metadata.description}
+                </p>
+              )}
+            </header>
+            <div className="animate-rise" style={{ animationDelay: "70ms" }}>
+              <MDXRenderer source={data.source} />
             </div>
-            <h1 className="text-3xl font-light tracking-tight">{data.metadata.title}</h1>
-            {data.metadata.description && (
-              <p className="text-muted-foreground">{data.metadata.description}</p>
-            )}
-          </header>
-          <MDXRenderer source={data.source} />
-        </>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

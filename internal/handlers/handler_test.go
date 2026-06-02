@@ -18,11 +18,16 @@ import (
 )
 
 type mockLinkService struct {
-	links         map[string]string
-	recentQueries []domain.PopularQuery
-	allKeywords   []domain.KeywordInfo
-	updateError   error
-	getError      error
+	links          map[string]string
+	recentQueries  []domain.PopularQuery
+	allKeywords    []domain.KeywordInfo
+	searchResults  []domain.KeywordInfo
+	searchError    error
+	updateError    error
+	getError       error
+	lastSearchQ    string
+	lastSearchLim  int
+	lastUpdateUser string
 }
 
 func (m *mockLinkService) GetLink(_ context.Context, word string, _ string) (string, error) {
@@ -35,10 +40,11 @@ func (m *mockLinkService) GetLink(_ context.Context, word string, _ string) (str
 	return "", service.InvalidQueryError{Message: "not found"}
 }
 
-func (m *mockLinkService) UpdateLink(_ context.Context, req domain.LinkRequest, _ string) error {
+func (m *mockLinkService) UpdateLink(_ context.Context, req domain.LinkRequest, userID string) error {
 	if m.updateError != nil {
 		return m.updateError
 	}
+	m.lastUpdateUser = userID
 	m.links[req.Word] = req.Link
 	return nil
 }
@@ -49,6 +55,15 @@ func (m *mockLinkService) GetRecentQueries(_ context.Context) ([]domain.PopularQ
 
 func (m *mockLinkService) GetAllKeywords(_ context.Context) ([]domain.KeywordInfo, error) {
 	return m.allKeywords, nil
+}
+
+func (m *mockLinkService) Search(_ context.Context, query string, limit int) ([]domain.KeywordInfo, error) {
+	m.lastSearchQ = query
+	m.lastSearchLim = limit
+	if m.searchError != nil {
+		return nil, m.searchError
+	}
+	return m.searchResults, nil
 }
 
 func setupTestHandler() *Handler {
@@ -67,6 +82,31 @@ func setupTestHandler() *Handler {
 		},
 		config: &config.Config{BaseURL: "http://localhost:8080"},
 		logger: logger.Default(),
+	}
+}
+
+func TestHealthCheck(t *testing.T) {
+	handler := setupTestHandler()
+
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	w := httptest.NewRecorder()
+	handler.HealthCheck(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %v, want 200", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+
+	var resp struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("status = %q, want %q", resp.Status, "ok")
 	}
 }
 
@@ -182,6 +222,54 @@ func TestListLinks(t *testing.T) {
 	}
 }
 
+func TestSearchLinks(t *testing.T) {
+	handler := setupTestHandler()
+	mock := handler.linkService.(*mockLinkService)
+	mock.searchResults = []domain.KeywordInfo{
+		{Word: "docs", Link: "https://docs.example.com", Tags: []string{"infra"}},
+	}
+
+	req := httptest.NewRequest("GET", "/api/search?q=doc&limit=5", nil)
+	w := httptest.NewRecorder()
+	handler.SearchLinks(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %v, want 200, body=%q", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Query   string               `json:"query"`
+		Results []domain.KeywordInfo `json:"results"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Query != "doc" {
+		t.Errorf("query echoed = %q, want %q", resp.Query, "doc")
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Word != "docs" {
+		t.Errorf("unexpected results: %#v", resp.Results)
+	}
+	if len(resp.Results[0].Tags) != 1 || resp.Results[0].Tags[0] != "infra" {
+		t.Errorf("tags not surfaced: %#v", resp.Results[0].Tags)
+	}
+	if mock.lastSearchQ != "doc" || mock.lastSearchLim != 5 {
+		t.Errorf("service called with q=%q limit=%d, want q=doc limit=5", mock.lastSearchQ, mock.lastSearchLim)
+	}
+}
+
+func TestSearchLinks_BadLimit(t *testing.T) {
+	handler := setupTestHandler()
+
+	req := httptest.NewRequest("GET", "/api/search?q=doc&limit=abc", nil)
+	w := httptest.NewRecorder()
+	handler.SearchLinks(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %v, want 400", w.Code)
+	}
+}
+
 func TestUpdateLinkLegacyForm(t *testing.T) {
 	handler := setupTestHandler()
 
@@ -203,7 +291,10 @@ func TestUpdateLinkLegacyForm(t *testing.T) {
 func TestRegisterRoutes(t *testing.T) {
 	handler := setupTestHandler()
 	router := mux.NewRouter()
-	handler.RegisterRoutes(router)
+	// Gating is exercised in middleware_test.go; here `authed` is an unguarded
+	// subrouter so we verify only that routes register and match by method.
+	authed := router.NewRoute().Subrouter()
+	handler.RegisterRoutes(router, authed)
 
 	tests := []struct {
 		method string
@@ -211,6 +302,7 @@ func TestRegisterRoutes(t *testing.T) {
 		body   string
 		status int
 	}{
+		{"GET", "/healthz", "", http.StatusOK},
 		{"GET", "/api/links", "", http.StatusOK},
 		{"POST", "/api/links", `{"word":"x","link":"https://x.com"}`, http.StatusOK},
 		{"GET", "/query/docs", "", http.StatusFound},
@@ -236,7 +328,16 @@ func TestRegisterRoutes(t *testing.T) {
 
 func TestGetUserID(t *testing.T) {
 	handler := setupTestHandler()
-	if uid := handler.getUserID(httptest.NewRequest("GET", "/", nil)); uid != "DefaultUser" {
-		t.Errorf("getUserID() = %v, want DefaultUser", uid)
+
+	// Anonymous request → empty author.
+	if uid := handler.getUserID(httptest.NewRequest("GET", "/", nil)); uid != "" {
+		t.Errorf("getUserID(anonymous) = %q, want empty", uid)
+	}
+
+	// Authenticated request → the user's email.
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(WithUser(req.Context(), &domain.User{Email: "user@example.com"}))
+	if uid := handler.getUserID(req); uid != "user@example.com" {
+		t.Errorf("getUserID(authed) = %q, want user@example.com", uid)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"golinks/internal/config"
@@ -21,6 +22,7 @@ type LinkService interface {
 	UpdateLink(ctx context.Context, req domain.LinkRequest, userID string) error
 	GetRecentQueries(ctx context.Context) ([]domain.PopularQuery, error)
 	GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo, error)
+	Search(ctx context.Context, query string, limit int) ([]domain.KeywordInfo, error)
 }
 
 // Handler owns the redirect + JSON endpoints for links.
@@ -43,19 +45,34 @@ func NewHandler(linkService LinkService, cfg *config.Config, log *logger.Logger)
 	}
 }
 
-// RegisterRoutes wires the redirect and JSON endpoints. Static-asset and SPA
-// fallback handling is registered separately in cmd/server/main.go.
-func (h *Handler) RegisterRoutes(router *mux.Router) {
+// RegisterRoutes wires the redirect and JSON endpoints. Reads go on the public
+// router; writes go on the auth-gated router. Static-asset and SPA fallback
+// handling is registered separately in cmd/server/main.go.
+func (h *Handler) RegisterRoutes(public, authed *mux.Router) {
+	// Liveness/readiness probe target for orchestrators (Kubernetes, Docker).
+	public.HandleFunc("/healthz", h.HealthCheck).Methods("GET")
+
 	// The golink contract: server-side 302 so browser search-engine integrations work.
-	router.HandleFunc("/query/{path:.*}", h.RedirectHandler).Methods("GET")
+	public.HandleFunc("/query/{path:.*}", h.RedirectHandler).Methods("GET")
 
-	// JSON API. The SPA uses only these.
-	router.HandleFunc("/api/links", h.ListLinks).Methods("GET")
-	router.HandleFunc("/api/links", h.CreateLink).Methods("POST")
+	// Public reads.
+	public.HandleFunc("/api/links", h.ListLinks).Methods("GET")
+	public.HandleFunc("/api/search", h.SearchLinks).Methods("GET")
 
-	// Back-compat aliases for the old template-era endpoints so browser
-	// engines configured against /update/ and /homepage/ keep working.
-	router.HandleFunc("/update/", h.UpdateLinkLegacy).Methods("POST")
+	// Authenticated writes.
+	authed.HandleFunc("/api/links", h.CreateLink).Methods("POST")
+
+	// Legacy form-encoded create. Now requires auth — closing the old
+	// unauthenticated write path. An authenticated admin's browser keyword POST
+	// is same-origin and carries the session cookie, so it keeps working.
+	authed.HandleFunc("/update/", h.UpdateLinkLegacy).Methods("POST")
+}
+
+// HealthCheck is a liveness/readiness probe target. It returns 200 as long as
+// the HTTP server is serving requests; it intentionally does no database work so
+// a transient query failure can't flap the pod.
+func (h *Handler) HealthCheck(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // RedirectHandler resolves a golink and issues a 302.
@@ -101,6 +118,33 @@ func (h *Handler) ListLinks(w http.ResponseWriter, r *http.Request) {
 		"keywords":       keywords,
 		"recent_queries": recent,
 		"base_url":       h.config.BaseURL,
+	})
+}
+
+// SearchLinks handles GET /api/search?q=&limit= and returns matching keywords.
+func (h *Handler) SearchLinks(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			http.Error(w, "limit must be an integer", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+
+	results, err := h.linkService.Search(r.Context(), q, limit)
+	if err != nil {
+		h.logger.Error("Search failed for q='%s': %v", q, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"query":   q,
+		"results": results,
 	})
 }
 
@@ -152,8 +196,12 @@ func (h *Handler) UpdateLinkLegacy(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("Link added successfully!"))
 }
 
-// getUserID extracts the user ID from the request. Authentication is not
-// implemented yet — see plan for the follow-up.
-func (h *Handler) getUserID(_ *http.Request) string {
-	return "DefaultUser"
+// getUserID returns the authenticated user's email, or "" when anonymous. Write
+// handlers run behind RequireAuth, so a user is always present there; the
+// public redirect handler may see "" (used only for logging).
+func (h *Handler) getUserID(r *http.Request) string {
+	if user := UserFromContext(r.Context()); user != nil {
+		return user.Email
+	}
+	return ""
 }

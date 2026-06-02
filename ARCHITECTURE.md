@@ -13,12 +13,15 @@ This document describes how GoLinks is wired end-to-end: the layered Go backend,
 │                         golinks (single binary)                    │
 │                                                                    │
 │  cmd/server/main.go                                                │
-│    └── gorilla/mux router                                          │
-│         ├── /query/{path:.*}            → 302 redirect             │
-│         ├── /api/links       (GET/POST) → JSON                     │
-│         ├── /update/         (POST)     → JSON (legacy form)       │
-│         ├── /api/docs        (GET/POST) → JSON                     │
-│         ├── /api/docs/{file} (GET/DEL)  → JSON                     │
+│    └── gorilla/mux router  (Authenticate middleware loads user)    │
+│         ├── /query/{path:.*}            → 302 redirect   [public]  │
+│         ├── /auth/*  (login/logout/me/status/setup)     [public]  │
+│         ├── /api/links  GET [public] · POST [auth]      → JSON     │
+│         ├── /api/search (GET)           → JSON          [public]   │
+│         ├── /update/    (POST)          → text          [auth]     │
+│         ├── /api/docs   GET [public] · POST [admin]     → JSON     │
+│         ├── /api/docs/{file} GET [public] · DEL [admin] → JSON     │
+│         ├── /api/users  (GET/POST/DEL)  → JSON          [admin]    │
 │         └── /*  (catch-all)             → embedded SPA / index.html│
 │                                                                    │
 │  internal/                                                         │
@@ -47,16 +50,22 @@ cmd/server/main.go                     Entrypoint: config → DB → repos → s
 internal/
 ├── config/config.go                   Env / .env loading; Config struct
 ├── database/sqlite.go                 sql.DB + schema migrations
-├── domain/models.go                   Shortcut, Query, KeywordInfo, PopularQuery, LinkRequest (json+db tags)
-├── handlers/handler.go                Redirect + /api/links + legacy /update/
+├── domain/models.go                   Shortcut, Query, KeywordInfo, PopularQuery, LinkRequest, User, Session (json+db tags)
+├── domain/errors.go                   Auth sentinel errors (ErrInvalidCredentials, ErrEmailTaken, …)
+├── handlers/handler.go                Redirect + /api/links + /api/search + legacy /update/
 ├── handlers/document.go               /api/docs CRUD
-├── handlers/handler_test.go           Table-driven tests with mock services
+├── handlers/auth.go                   /auth/* + /api/users; session cookie helpers
+├── handlers/middleware.go             Authenticate / RequireAuth / RequireAdmin + UserFromContext
+├── handlers/*_test.go                 Table-driven tests with mock services
 ├── logger/logger.go                   slog wrapper
-├── repository/shortcut.go             SQL for linktable
+├── repository/shortcut.go             SQL for linktable (+ tags, search)
 ├── repository/query.go                SQL for queries (analytics)
+├── repository/user.go                 SQL for users
+├── repository/session.go              SQL for sessions
 └── service/
-    ├── link.go                        LinkService: GetLink, UpdateLink, GetRecentQueries, GetAllKeywords
-    └── document.go                    DocumentService: GetDocument, SaveDocument, ListDocuments, DeleteDocument
+    ├── link.go                        LinkService: GetLink, UpdateLink, GetRecentQueries, GetAllKeywords, Search
+    ├── document.go                    DocumentService: GetDocument, SaveDocument, ListDocuments, DeleteDocument
+    └── auth.go                         AuthService: Bootstrap, Login, Authenticate, Logout, CreateUser, ListUsers, DeleteUser
 web/frontend/
 ├── embed.go                           //go:embed all:dist + SPA fallback handler
 ├── vite.config.ts                     Dev server proxy: /api, /query → :8080
@@ -100,7 +109,7 @@ Orchestrates startup in this order (`main.go:24-73`):
 
 The thinnest layer: parse requests, call services, encode responses. No business logic. Errors of type `service.InvalidQueryError` are mapped to HTTP 400; everything else is 500.
 
-`writeJSON(w, status, body)` in `internal/handlers/document.go:124` is the canonical JSON encoder used across both files.
+`writeJSON(w, status, body)` in `internal/handlers/document.go:128` is the canonical JSON encoder used across both files.
 
 ### `internal/service/` — business logic
 
@@ -116,11 +125,13 @@ Plain `database/sql` queries. No ORM. Each method takes a `context.Context` and 
 
 Three tables (`internal/database/sqlite.go:28-46`):
 
-- **linktable** — `(id, word, link, user, created_at)`.
+- **linktable** — `(id, word, link, user, created_at)`. `user` holds the author's email.
 - **queries** — `(query_id, word_id → linktable.id, created_at)`.
-- **tags** — `(id, word_id → linktable.id, tag)` — defined but currently unused.
+- **tags** — `(id, word_id → linktable.id, tag)`, unique on `(word_id, tag)`. Powers tag chips and search.
+- **users** — `(id, email, password_hash, role, created_at)`, unique on `lower(email)`.
+- **sessions** — `(token_hash PK, user_id → users.id ON DELETE CASCADE, expires_at, created_at)`.
 
-Indexes on `linktable.word`, `queries.word_id`, `queries.created_at`. Foreign keys are enabled via the connection string (`?_foreign_keys=on`).
+Indexes on `linktable.word`, `queries.word_id`, `queries.created_at`, `tags.tag`, `sessions.user_id`, `sessions.expires_at`. Foreign keys are enabled via the connection string (`?_foreign_keys=on`) — required for the session cascade. Migrations are an ordered `[]string` in `Migrate()`; tests run the same `Migrate` against in-memory DBs so the schema can't drift.
 
 ### `internal/domain/` — shared models
 
@@ -131,11 +142,37 @@ POGOs (Plain Old Go Objects) with `json:` and `db:` tags. Used unchanged as both
 Compile-time `//go:embed all:dist` pulls the Vite build output into the binary. The exported `Handler(reservedPrefixes...)` returns an `http.Handler` that:
 
 - Refuses non-GET/HEAD with 405.
-- Refuses any path starting with `api/` or `query/` (defense in depth — those routes match earlier, but if registration order ever changes, the SPA must not shadow them).
+- Refuses any path starting with `api/`, `query/`, or `auth/` (defense in depth — those routes match earlier, but if registration order ever changes, the SPA must not shadow them).
 - Serves real files from the embedded FS when they exist (`/assets/*`, `/favicon.ico`).
 - Falls back to `index.html` with `Cache-Control: no-cache` for everything else, so React Router can take over on hard refreshes of `/setup`, `/docs/foo`, etc.
 
 There's also a `brokenHandler` that returns 503 with a helpful message if the embedded `dist/` is missing `index.html`. Combined with the committed stub `dist/index.html`, this guarantees `git clone && go build` always produces a runnable binary.
+
+---
+
+## Authentication & authorization
+
+Email + password with server-side sessions. No JWT, no signing secret.
+
+### Storage
+- **`users`** — `(id, email, password_hash, role, created_at)`, with a `UNIQUE INDEX on lower(email)` for case-insensitive uniqueness. Passwords are bcrypt-hashed (`golang.org/x/crypto/bcrypt`, cost configurable).
+- **`sessions`** — `(token_hash PK, user_id → users.id ON DELETE CASCADE, expires_at, created_at)`. Only the **SHA-256 hash** of the opaque session token is stored, so a database read can't mint a valid cookie. Indexed on `user_id` and `expires_at`.
+
+### Session lifecycle (`service/auth.go`)
+1. **Login / setup** verifies the password (with a dummy bcrypt compare on unknown emails to equalize timing), generates a 32-byte `crypto/rand` token, stores `sha256(token)`, and returns the raw token. A fresh token is minted on every login (no session fixation).
+2. The raw token rides in an `HttpOnly`, `SameSite=Lax`, `Secure` (production) cookie named `golinks_session`, with `MaxAge = SESSION_TTL_HOURS`.
+3. **Authenticate** hashes the cookie value, looks up the session, and (if unexpired) loads the user. Expired sessions are deleted on access. A background goroutine in `main.go` purges expired sessions hourly.
+
+### Bootstrap
+On an empty `users` table, `POST /auth/setup` creates the first user as `admin`. Afterwards `Bootstrap` returns `ErrRegistrationClosed` — there is no open self-registration; admins create users via `POST /api/users`.
+
+### Request gating (`handlers/middleware.go`, wired in `main.go`)
+- A **global `Authenticate` middleware** (`router.Use`) loads the optional user into request context. It never rejects — an absent/invalid cookie just means anonymous, so public routes keep working. `handlers.UserFromContext(ctx)` retrieves it.
+- Two **subrouters** carry guards: `authed` (`RequireAuth` → 401 if anonymous) and `admin` (`RequireAdmin` → 401 anonymous / 403 non-admin). Each `RegisterRoutes` receives the routers it needs and registers reads on the public router, writes on the gated ones. Method-specific routes (GET public, POST authed on the same path) coexist because mux matches by method.
+- `getUserID` in `handler.go` now reads the email from context; write handlers run behind `RequireAuth`, so a user is always present there. The author stored on a link (`linktable.user`) is the logged-in user's email.
+
+### CSRF
+Writes rely on `SameSite=Lax` cookies plus JSON-only bodies for a same-origin SPA: a cross-site form can't send `application/json` without a preflight, and Lax blocks cross-site POST cookies. No CSRF token today — revisit for cross-origin/multi-tenant deployments.
 
 ---
 
@@ -215,7 +252,7 @@ The whole pipeline runs in the browser. The Go server never sees compiled HTML �
 
 ### Development
 
-`make dev` runs the Go server (via `air` if installed, else `go run`) and the Vite dev server (`:5173`) concurrently. Vite's dev server has a proxy (`vite.config.ts:14-17`) that forwards `/api/*` and `/query/*` to `http://localhost:8080`, so the React app can call relative URLs and hit the Go backend without CORS gymnastics.
+`make dev` runs the Go server (via `air` if installed, else `go run`) and the Vite dev server (`:5173`) concurrently. Vite's dev server has a proxy (`vite.config.ts`) that forwards `/api/*`, `/query/*`, and `/auth/*` to the backend (default `http://localhost:8080`; override with `VITE_PROXY_TARGET` in `web/frontend/.env.local`), so the React app can call relative URLs and hit the Go backend without CORS gymnastics.
 
 For breakpoint debugging, see `.zed/debug.json` — three configs: Backend (Go via Delve), Frontend dev server (Vite via Node), Frontend (Chrome).
 
@@ -242,7 +279,7 @@ The `HEALTHCHECK` hits `http://localhost:8080/` every 30 s.
 
 ## Endpoint reference
 
-Routes are registered in `internal/handlers/handler.go:46-58` (links + redirect) and `internal/handlers/document.go:33-38` (docs), with the SPA catch-all wired in `cmd/server/main.go:75-78`. Match order matters — gorilla/mux matches in registration order.
+Routes are registered by each handler's `RegisterRoutes(public, gated)` method (links, docs, auth), with the global `Authenticate` middleware, the `authed`/`admin` subrouters, and the SPA catch-all wired in `cmd/server/main.go`. Match order matters — gorilla/mux matches in registration order, but method-specific routes (GET-public, POST-authed on the same path) coexist regardless of order. Each endpoint below notes its access level: **[public]**, **[auth]**, or **[admin]**.
 
 ### `GET /query/{path:.*}` — golink redirect
 
@@ -266,7 +303,18 @@ The contract that justifies a server-side rendered handler. Browser search-engin
 - If not found *and* `word` contains spaces, peel the last token off and treat it as a search term (`go google cats` → look up `google cats`, fail, then `google` with searchTerm `cats`).
 - If still not found → return `InvalidQueryError`.
 
-### `GET /api/links` — list keywords + recent queries
+### Auth endpoints (`handlers/auth.go`)
+
+- **`GET /auth/status`** [public] — `{needs_setup, authenticated, user?}`. Drives the SPA bootstrap (`AuthProvider`).
+- **`GET /auth/me`** [public] — `{authenticated, user?}`.
+- **`POST /auth/setup`** [public] — first-run only. Body `{email, password}`; creates the first user as `admin`, sets the session cookie. `403` if a user already exists.
+- **`POST /auth/login`** [public] — body `{email, password}`; sets the session cookie on success, `401` on bad credentials (unknown email and wrong password are indistinguishable).
+- **`POST /auth/logout`** [public] — deletes the session and clears the cookie (idempotent).
+- **`GET /api/users`** [admin] — `{users: [...]}`.
+- **`POST /api/users`** [admin] — body `{email, password, role}`; `409` on duplicate email, `400` on weak password.
+- **`DELETE /api/users/{id}`** [admin] — `409` (`ErrLastAdmin`) if it would remove the only admin; `404` if absent.
+
+### `GET /api/links` — list keywords + recent queries [public]
 
 `handler.go:ListLinks`. Returns everything the homepage needs in one call.
 
@@ -321,7 +369,7 @@ The contract that justifies a server-side rendered handler. Browser search-engin
 
 If the URL omits the extension (`/api/docs/sample`), the handler tries `.md` first, then `.mdx`. 404 if neither exists. The client compiles MDX in the browser (`web/frontend/src/lib/mdx.tsx`), so the server never renders to HTML.
 
-### `POST /api/docs` — upload a document
+### `POST /api/docs` — upload a document [admin]
 
 `document.go:UploadDocument`. `multipart/form-data` with field `file`.
 
@@ -330,15 +378,15 @@ If the URL omits the extension (`/api/docs/sample`), the handler tries `.md` fir
 3. Sanitize the filename via `filepath.Base` (no path traversal) and write into `docs/`.
 4. Return `{success, filename, message, url}` (the `url` is `/docs/{filename}` — a SPA route, not an API route).
 
-⚠️ **No authentication.** With runtime MDX compilation, an unauthenticated upload is effectively a stored XSS / RCE-in-the-browser vector. Gate this behind auth or restrict uploads to `.md` before public deployment.
+**Admin-gated.** Runtime MDX compiles JSX in the viewer's browser, so upload is restricted to admins via the `RequireAdmin` subrouter — this closes the former unauthenticated stored-XSS/RCE vector.
 
-### `DELETE /api/docs/{filename}` — delete a document
+### `DELETE /api/docs/{filename}` — delete a document [admin]
 
 `document.go:DeleteDocument`. Sanitize via `filepath.Base`, `os.Remove`. Returns `{success, message}` or 500.
 
 ### `GET /` and `GET /<anything-else>` — embedded SPA
 
-The catch-all (`cmd/server/main.go`) hands the request to `frontend.Handler("api", "query")`. Behaviour described in the **`web/frontend/embed.go`** section above.
+The catch-all (`cmd/server/main.go`) hands the request to `frontend.Handler("api", "query", "auth")`. Behaviour described in the **`web/frontend/embed.go`** section above.
 
 ---
 
@@ -351,8 +399,12 @@ Loaded by `internal/config/config.go`. All env vars optional; defaults shown.
 | `PORT`          | `8080`                   | `cmd/server/main.go` server bind                         |
 | `DATABASE_PATH` | `golinks.db`             | `database.NewSQLiteDB`                                   |
 | `BASE_URL`      | `http://localhost:8080`  | Returned in `/api/links` and used in 302 fallback target |
-| `ENVIRONMENT`   | `development`            | Logged on startup; reserved for future env-aware logic   |
+| `ENVIRONMENT`   | `development`            | Logged on startup; sets the `COOKIE_SECURE` default      |
 | `LOG_LEVEL`     | `info`                   | `logger.Config.Level`                                    |
+| `SESSION_TTL_HOURS` | `720`                | Session lifetime + cookie `MaxAge` (`config.AuthConfig`) |
+| `COOKIE_SECURE` | prod `true` / dev `false`| Session cookie `Secure` flag                             |
+| `BCRYPT_COST`   | `12`                     | bcrypt work factor for password hashing                  |
+| `MIN_PASSWORD_LEN` | `8`                   | Minimum password length                                  |
 
 `.env` at the repo root is auto-loaded if present (godotenv). See `env.example`.
 
@@ -360,9 +412,11 @@ Loaded by `internal/config/config.go`. All env vars optional; defaults shown.
 
 ## Security & known TODOs
 
-- **`POST /api/docs` is unauthenticated.** Combined with runtime MDX compilation, this is the highest-risk gap in the codebase. Mitigations: gate behind a shared token, require auth, or restrict uploads to `.md`.
-- **No CSRF protection** on `POST /api/links` or `/update/`. Acceptable for a single-user tool on localhost; revisit if exposed publicly.
-- **`getUserID` returns `"DefaultUser"`** unconditionally (`handler.go:getUserID`). Real auth never landed; the `user` column in `linktable` is a placeholder.
+- **Doc uploads are admin-gated** (resolved). `POST`/`DELETE /api/docs` require the admin role, closing the former unauthenticated stored-XSS/RCE vector from runtime MDX.
+- **Authentication is implemented** (resolved). `getUserID` reads the user from request context; `linktable.user` holds the author's email.
+- **No CSRF token** on writes. Mitigated by `SameSite=Lax` cookies + JSON-only bodies for the same-origin SPA; adequate for single-instance use. Add token-based CSRF before any cross-origin or multi-tenant public deployment.
+- **Email + password only.** No OAuth/SSO yet; the `AuthService` is structured so a provider can be added as an alternate login path.
+- **No account-level rate limiting** on `/auth/login`. Add brute-force protection (per-IP/account throttling) before public exposure.
 
 ## Future / aspirational
 

@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "golinks.fullname" . }}
+  labels:
+    {{- include "golinks.labels" . | nindent 4 }}
+spec:
+  # Pinned to 1: GoLinks uses SQLite (single writer) on a ReadWriteOnce volume and
+  # cannot run more than one replica. .Values.replicaCount is intentionally ignored.
+  replicas: 1
+  strategy:
+    {{- toYaml .Values.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "golinks.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll the pod whenever the config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "golinks.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "golinks.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- if and .Values.persistence.enabled .Values.persistence.seedDocs }}
+      initContainers:
+        # Seed the docs baked into the image onto the volume, but only if the docs
+        # directory is empty — so existing uploads are never overwritten.
+        - name: seed-docs
+          image: {{ include "golinks.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ -z "$(ls -A /seed 2>/dev/null)" ]; then
+                echo "seeding baked-in docs into volume"
+                cp -a /app/docs/. /seed/ 2>/dev/null || true
+              else
+                echo "docs volume already populated; skipping seed"
+              fi
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /seed
+              subPath: docs
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ include "golinks.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.config.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "golinks.fullname" . }}-config
+          env:
+            # Set explicitly (not via the ConfigMap) so the volume contract is obvious.
+            - name: DATABASE_PATH
+              value: {{ .Values.config.databasePath | quote }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.healthPath }}
+              port: http
+            {{- toYaml .Values.probes.startup | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.healthPath }}
+              port: http
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.healthPath }}
+              port: http
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+              subPath: db
+            {{- if .Values.persistence.enabled }}
+            # Only mount docs onto the volume when persisting — otherwise let the
+            # image's baked-in docs show through the container filesystem.
+            - name: data
+              mountPath: /app/docs
+              subPath: docs
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "golinks.pvcName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

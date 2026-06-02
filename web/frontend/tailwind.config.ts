@@ -15,7 +15,7 @@ const config: Config = {
     },
     extend: {
       fontFamily: {
-        sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        sans: ["Archivo Variable", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
         mono: ["JetBrains Mono", "SF Mono", "Monaco", "Cascadia Code", "monospace"],
       },
       colors: {
@@ -67,6 +67,21 @@ const config: Config = {
           from: { opacity: "0", transform: "translateY(6px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
+        // Orchestrated page-load reveal — items rise into place.
+        "rise": {
+          from: { opacity: "0", transform: "translateY(12px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+        // Instrument cursor blink for the hero omnibox.
+        "blink": {
+          "0%, 49%": { opacity: "1" },
+          "50%, 100%": { opacity: "0" },
+        },
+        // Hairline sweeps across a rule on load.
+        "rule": {
+          from: { transform: "scaleX(0)" },
+          to: { transform: "scaleX(1)" },
+        },
         "accordion-down": {
           from: { height: "0" },
           to: { height: "var(--radix-accordion-content-height)" },
@@ -78,6 +93,9 @@ const config: Config = {
       },
       animation: {
         "fade-in": "fade-in 0.3s ease-out",
+        "rise": "rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both",
+        "blink": "blink 1.1s step-end infinite",
+        "rule": "rule 0.6s cubic-bezier(0.16, 1, 0.3, 1) both",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
       },

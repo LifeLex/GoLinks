@@ -18,17 +18,16 @@ cmd/server/                  Application entrypoint
 internal/
 ├── config/                  Env / dotenv configuration
 ├── database/                SQLite connection + migrations
-├── domain/                  Models (json + db tagged)
-├── handlers/                HTTP handlers (JSON API + redirect)
+├── domain/                  Models (json + db tagged) + sentinel errors
+├── handlers/                HTTP handlers (JSON API + redirect) + auth middleware
 ├── logger/                  Structured logger
-├── repository/              Data access layer
-└── service/                 Business logic
+├── repository/              Data access layer (shortcuts, queries, users, sessions)
+└── service/                 Business logic (links, documents, auth)
 web/frontend/                Vite + React SPA
 ├── src/components/          App components
 ├── src/components/ui/       shadcn primitives
 ├── src/pages/               Route-level pages
 ├── src/lib/                 api.ts, mdx.tsx, utils.ts
-├── src/hooks/               Custom hooks
 ├── public/                  Static assets (favicon)
 ├── dist/                    Build output, embedded into the Go binary
 └── embed.go                 go:embed bridge + SPA fallback handler
@@ -51,9 +50,16 @@ docs/                        User-uploaded .md / .mdx, read from disk at runtime
 
 ### HTTP handlers
 - One JSON shape per endpoint, encoded via the `writeJSON(w, status, body)` helper. Don't hand-roll JSON in each handler.
-- The golink resolver (`/query/{path:.*}`) MUST stay a server-side 302 — it's the contract that lets browser search-engine integrations work. Never replace it with a client-side redirect.
-- `/api/*` is reserved for JSON. The catch-all SPA handler refuses `/api/*` requests defensively as a backstop against route-registration regressions.
-- Keep `/update/` (form-encoded) as a legacy alias for old browser configurations until you're sure no one relies on it.
+- The golink resolver (`/query/{path:.*}`) MUST stay a server-side 302 — it's the contract that lets browser search-engine integrations work. Never replace it with a client-side redirect. It stays **public** unconditionally.
+- `/api/*` and `/auth/*` are reserved for JSON. The catch-all SPA handler refuses these prefixes defensively as a backstop against route-registration regressions.
+- `/update/` (form-encoded) is a legacy create alias. It now **requires auth** like `POST /api/links` — closing the old unauthenticated write path.
+
+### Authentication & authorization
+- **Email + password**, bcrypt-hashed (`golang.org/x/crypto/bcrypt`). Sessions are server-side: an opaque random token lives in an `HttpOnly`, `SameSite=Lax`, `Secure` (prod) cookie, and only its **SHA-256 hash** is stored in the `sessions` table. No JWT, no signing secret.
+- **Bootstrap:** the first user created on an empty DB (`POST /auth/setup`) becomes `admin`. Registration is closed afterward; admins create users via `POST /api/users`.
+- **Gating model:** a global `Authenticate` middleware loads the optional user into request context (anonymous if no/invalid cookie — it never rejects, so reads stay public). Two subrouters carry guards: `RequireAuth` (401 if anonymous) and `RequireAdmin` (401/403). Wire write routes onto these in `cmd/server/main.go`; never gate inside handler bodies.
+- **Reads public, writes authed.** Docs upload/delete are admin-only (runtime MDX evaluates JSX in the browser). Get the current user with `handlers.UserFromContext(ctx)`; it returns nil when anonymous.
+- Map auth failures to status codes via the `domain.Err*` sentinels (see `internal/domain/errors.go`) — never leak whether an email exists.
 
 ### Testing
 - Table-driven unit tests with parallel execution.
@@ -100,12 +106,12 @@ docs/                        User-uploaded .md / .mdx, read from disk at runtime
 - Real MDX compilation happens **client-side** via `@mdx-js/mdx`'s `evaluate()` in `src/lib/mdx.tsx`. The server returns raw source from `/api/docs/{filename}`.
 - Components exposed to MDX are explicitly enumerated in the `mdxComponents` map. Adding a new component for authors means: import it, add it to that map. No magic auto-discovery.
 - `remark-gfm` provides tables, strikethrough, task lists; `rehype-highlight` provides syntax highlighting (GitHub theme).
-- **Security:** runtime MDX evaluates JSX as code in the viewer's browser. `POST /api/docs` is unauthenticated — gate it or restrict uploads to `.md` before exposing this app publicly. Tracked as a TODO in `internal/handlers/document.go`.
+- **Security:** runtime MDX evaluates JSX as code in the viewer's browser, so `POST /api/docs` (and `DELETE`) are **admin-only** (gated via the `RequireAdmin` subrouter). This closes the former unauthenticated-upload hole. Reads stay public.
 
 ## Workflows
 
 ### Development
-- `make dev` runs the Go server (with `air` if installed) and the Vite dev server (`:5173`) concurrently. Vite proxies `/api` and `/query` to `:8080`.
+- `make dev` runs the Go server (with `air` if installed) and the Vite dev server (`:5173`) concurrently. Vite proxies `/api`, `/query`, and `/auth` to the backend (default `:8080`; override with `VITE_PROXY_TARGET` in `web/frontend/.env.local`).
 - Frontend-only: `make frontend-dev`. Backend-only: `go run ./cmd/server` (the committed stub `dist/index.html` will serve a "build the frontend" page until you run `make frontend-build`).
 
 ### Build
@@ -130,5 +136,6 @@ These are good practices to apply *if and when* the project grows into them — 
 
 - **OpenTelemetry** tracing, metrics, and structured logs. Adopt once there's an actual observability backend to ship to (Collector, Jaeger, Prometheus, etc.).
 - **Distributed rate-limiting** (Redis-backed). Single-instance deployment doesn't need it.
-- **Auth on `POST /api/docs`.** Critical before any public deployment because of runtime MDX (see security note above).
+- **CSRF tokens.** Writes currently rely on `SameSite=Lax` cookies + JSON-only bodies, which is adequate for a same-origin SPA. Add token-based CSRF protection before any cross-origin or multi-tenant public deployment.
+- **OAuth / SSO.** The auth layer is email+password today; the service is structured so an OAuth provider can be added as an alternate login path.
 - **Retries / circuit breakers / backoff.** Add when external dependencies appear; today there are none beyond SQLite.

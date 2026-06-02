@@ -29,12 +29,14 @@ func NewDocumentHandler(docService *service.DocumentService, log *logger.Logger)
 	}
 }
 
-// RegisterRoutes wires the /api/docs endpoints.
-func (h *DocumentHandler) RegisterRoutes(router *mux.Router) {
-	router.HandleFunc("/api/docs", h.ListDocuments).Methods("GET")
-	router.HandleFunc("/api/docs", h.UploadDocument).Methods("POST")
-	router.HandleFunc("/api/docs/{filename}", h.GetDocument).Methods("GET")
-	router.HandleFunc("/api/docs/{filename}", h.DeleteDocument).Methods("DELETE")
+// RegisterRoutes wires the /api/docs endpoints. Reads are public; uploads and
+// deletes are admin-only — runtime MDX evaluates JSX in the viewer's browser,
+// so write access must be restricted.
+func (h *DocumentHandler) RegisterRoutes(public, admin *mux.Router) {
+	public.HandleFunc("/api/docs", h.ListDocuments).Methods("GET")
+	public.HandleFunc("/api/docs/{filename}", h.GetDocument).Methods("GET")
+	admin.HandleFunc("/api/docs", h.UploadDocument).Methods("POST")
+	admin.HandleFunc("/api/docs/{filename}", h.DeleteDocument).Methods("DELETE")
 }
 
 // GetDocument returns the raw source and metadata of a single document.
@@ -62,10 +64,8 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, doc)
 }
 
-// UploadDocument persists an uploaded .md/.mdx file.
-//
-// TODO(auth): currently unauthenticated. Runtime MDX evaluates JSX as code on
-// the client — gate this behind auth before deploying publicly.
+// UploadDocument persists an uploaded .md/.mdx file. Admin-gated at the route
+// level (see RegisterRoutes) because runtime MDX evaluates JSX in the browser.
 func (h *DocumentHandler) UploadDocument(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		http.Error(w, "Failed to parse form", http.StatusBadRequest)

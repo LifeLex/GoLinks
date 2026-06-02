@@ -6,41 +6,23 @@ import (
 	"testing"
 	"time"
 
+	"golinks/internal/database"
 	"golinks/internal/domain"
 	"golinks/internal/logger"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// setupTestDB creates an in-memory SQLite database for testing
+// setupTestDB creates an in-memory SQLite database for testing, using the same
+// migrations as production so the test schema can never drift from the real one.
 func setupTestDB(t *testing.T) *sql.DB {
 	db, err := sql.Open("sqlite3", ":memory:?_foreign_keys=on")
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
 
-	// Create tables
-	migrations := []string{
-		`CREATE TABLE linktable (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			word TEXT NOT NULL,
-			link TEXT NOT NULL,
-			user TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE TABLE queries (
-			query_id INTEGER PRIMARY KEY AUTOINCREMENT,
-			word_id INTEGER NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (word_id) REFERENCES linktable(id)
-		)`,
-		`CREATE INDEX idx_linktable_word ON linktable(word)`,
-	}
-
-	for _, migration := range migrations {
-		if _, err := db.Exec(migration); err != nil {
-			t.Fatalf("Failed to run migration: %v", err)
-		}
+	if err := database.Migrate(db); err != nil {
+		t.Fatalf("Failed to run migrations: %v", err)
 	}
 
 	return db
@@ -242,6 +224,92 @@ func TestShortcutRepository_GetAllKeywords(t *testing.T) {
 	if _, exists := keywordMap["github"]; !exists {
 		t.Error("github keyword not found")
 	}
+}
+
+func TestShortcutRepository_TagsRoundTrip(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewShortcutRepository(db, logger.New(logger.Config{Level: "error", Format: "text"}))
+
+	sc := &domain.Shortcut{
+		Word: "grafana",
+		Link: "https://grafana.example.com",
+		User: "user1",
+		Tags: []string{"infra", "monitoring", "infra"}, // duplicate is ignored by the unique index
+	}
+	if err := repo.Create(context.Background(), sc); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	keywords, err := repo.GetAllKeywords(context.Background())
+	if err != nil {
+		t.Fatalf("GetAllKeywords() error = %v", err)
+	}
+	if len(keywords) != 1 {
+		t.Fatalf("got %d keywords, want 1", len(keywords))
+	}
+	// Tags come back ordered alphabetically (idx scan) and de-duplicated.
+	got := keywords[0].Tags
+	if len(got) != 2 || got[0] != "infra" || got[1] != "monitoring" {
+		t.Errorf("tags = %v, want [infra monitoring]", got)
+	}
+}
+
+func TestShortcutRepository_Search(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewShortcutRepository(db, logger.New(logger.Config{Level: "error", Format: "text"}))
+
+	seed := []*domain.Shortcut{
+		{Word: "grafana", Link: "https://grafana.example.com", User: "u", Tags: []string{"infra", "monitoring"}},
+		{Word: "github", Link: "https://github.com", User: "u", Tags: []string{"code"}},
+		{Word: "calendar", Link: "https://cal.example.com", User: "u"},
+	}
+	for _, s := range seed {
+		if err := repo.Create(context.Background(), s); err != nil {
+			t.Fatalf("seed Create() error = %v", err)
+		}
+	}
+
+	tests := []struct {
+		name      string
+		query     string
+		wantWords []string
+	}{
+		{"match by word", "graf", []string{"grafana"}},
+		{"match by link host", "github.com", []string{"github"}},
+		{"match by tag", "monitoring", []string{"grafana"}},
+		{"case-insensitive", "GRAF", []string{"grafana"}},
+		{"no match", "nonexistent", nil},
+		{"literal percent is escaped", "%", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := repo.Search(context.Background(), tt.query, 50)
+			if err != nil {
+				t.Fatalf("Search() error = %v", err)
+			}
+			if len(results) != len(tt.wantWords) {
+				t.Fatalf("Search(%q) returned %d results %v, want %v", tt.query, len(results), wordsOf(results), tt.wantWords)
+			}
+			for i, w := range tt.wantWords {
+				if results[i].Word != w {
+					t.Errorf("result[%d].Word = %q, want %q", i, results[i].Word, w)
+				}
+			}
+		})
+	}
+}
+
+func wordsOf(keywords []domain.KeywordInfo) []string {
+	out := make([]string, len(keywords))
+	for i, k := range keywords {
+		out[i] = k.Word
+	}
+	return out
 }
 
 func TestShortcutRepository_GetByWord_MostRecent(t *testing.T) {

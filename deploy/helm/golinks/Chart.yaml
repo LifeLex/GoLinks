@@ -1,0 +1,20 @@
+apiVersion: v2
+name: golinks
+description: Self-hosted GoLinks — a Go + SQLite golink redirector with an embedded React SPA
+type: application
+# Chart version — bump on every chart change.
+version: 0.1.0
+# Application version — the image tag used when image.tag is empty.
+appVersion: "0.1.0"
+home: https://github.com/LifeLex/GoLinks
+sources:
+  - https://github.com/LifeLex/GoLinks
+keywords:
+  - golinks
+  - go-links
+  - redirector
+  - url-shortener
+  - sqlite
+maintainers:
+  - name: LifeLex
+    url: https://github.com/LifeLex

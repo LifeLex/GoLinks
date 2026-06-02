@@ -24,7 +24,7 @@ frontend-install: ## Install frontend dependencies
 frontend-build: ## Build the Vite/React SPA into web/frontend/dist
 	@cd $(FRONTEND_DIR) && npm run build
 
-frontend-dev: ## Run the Vite dev server (proxies /api and /query to :8080)
+frontend-dev: ## Run the Vite dev server (proxies /api and /query to the backend, default :8080)
 	@cd $(FRONTEND_DIR) && npm run dev
 
 # --- Go ---------------------------------------------------------------------

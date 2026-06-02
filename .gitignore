@@ -76,9 +76,11 @@ test.db
 migrate_test.db
 test_fk.db
 
-# GoLinks specific
-golinks
-golinks.exe
+# GoLinks specific — the compiled root binary only.
+# Anchored with a leading slash so it doesn't also ignore directories named
+# "golinks" elsewhere in the tree (e.g. deploy/helm/golinks/).
+/golinks
+/golinks.exe
 
 # Temporary files from tests
 *.tmp

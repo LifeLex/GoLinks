@@ -16,6 +16,7 @@ type ShortcutRepository interface {
 	GetByWord(ctx context.Context, word string) (*domain.Shortcut, error)
 	Create(ctx context.Context, shortcut *domain.Shortcut) error
 	GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo, error)
+	Search(ctx context.Context, query string, limit int) ([]domain.KeywordInfo, error)
 }
 
 // QueryRepository interface for query operations
@@ -120,6 +121,7 @@ func (s *LinkService) UpdateLink(ctx context.Context, req domain.LinkRequest, us
 		Link:      req.Link,
 		User:      userID,
 		CreatedAt: time.Now(),
+		Tags:      normalizeTags(req.Tags),
 	}
 
 	if err := s.shortcutRepo.Create(ctx, shortcut); err != nil {
@@ -167,6 +169,39 @@ func (s *LinkService) GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo,
 	return result, nil
 }
 
+// defaultSearchLimit caps results when the caller does not specify a limit.
+const defaultSearchLimit = 50
+
+// maxSearchLimit is the hard upper bound on results a single search returns.
+const maxSearchLimit = 200
+
+// Search finds keywords matching the query across word, link, and tags. An
+// empty query returns no results rather than the whole table. limit <= 0 uses
+// the default; values above the max are clamped.
+func (s *LinkService) Search(ctx context.Context, query string, limit int) ([]domain.KeywordInfo, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []domain.KeywordInfo{}, nil
+	}
+
+	switch {
+	case limit <= 0:
+		limit = defaultSearchLimit
+	case limit > maxSearchLimit:
+		limit = maxSearchLimit
+	}
+
+	s.logger.Debug("Searching keywords: q='%s' limit=%d", query, limit)
+	results, err := s.shortcutRepo.Search(ctx, query, limit)
+	if err != nil {
+		s.logger.Error("Search failed for q='%s': %v", query, err)
+		return nil, err
+	}
+
+	s.logger.Debug("Search succeeded: q='%s' results=%d", query, len(results))
+	return results, nil
+}
+
 // validateLinkRequest validates a link request
 func (s *LinkService) validateLinkRequest(ctx context.Context, req domain.LinkRequest) error {
 	req.Word = strings.TrimSpace(req.Word)
@@ -194,6 +229,38 @@ func (s *LinkService) validateLinkRequest(ctx context.Context, req domain.LinkRe
 // isURL checks if a string is a URL
 func isURL(link string) bool {
 	return strings.HasPrefix(link, "http://") || strings.HasPrefix(link, "https://")
+}
+
+// maxTagsPerLink bounds how many tags a single link may carry.
+const maxTagsPerLink = 20
+
+// normalizeTags lower-cases, trims, and de-duplicates tags, dropping empties
+// and preserving first-seen order. The result is capped at maxTagsPerLink.
+func normalizeTags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag == "" {
+			continue
+		}
+		if _, dup := seen[tag]; dup {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+		if len(out) == maxTagsPerLink {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // processResultLink processes a URL with search term substitution

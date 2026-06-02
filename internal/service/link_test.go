@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,8 +12,10 @@ import (
 
 // Mock repositories for testing
 type mockShortcutRepository struct {
-	shortcuts map[string]*domain.Shortcut
-	createErr error
+	shortcuts       map[string]*domain.Shortcut
+	createErr       error
+	lastSearchQuery string
+	lastSearchLimit int
 }
 
 func (m *mockShortcutRepository) GetByWord(ctx context.Context, word string) (*domain.Shortcut, error) {
@@ -38,9 +41,30 @@ func (m *mockShortcutRepository) GetAllKeywords(ctx context.Context) ([]domain.K
 			Word:      word,
 			Link:      shortcut.Link,
 			CreatedAt: shortcut.CreatedAt,
+			Tags:      shortcut.Tags,
 		})
 	}
 	return keywords, nil
+}
+
+// lastSearch records the arguments of the most recent Search call so tests can
+// assert how the service normalized them before delegating.
+func (m *mockShortcutRepository) Search(ctx context.Context, query string, limit int) ([]domain.KeywordInfo, error) {
+	m.lastSearchQuery = query
+	m.lastSearchLimit = limit
+	var results []domain.KeywordInfo
+	for word, shortcut := range m.shortcuts {
+		results = append(results, domain.KeywordInfo{
+			Word:      word,
+			Link:      shortcut.Link,
+			CreatedAt: shortcut.CreatedAt,
+			Tags:      shortcut.Tags,
+		})
+		if len(results) == limit {
+			break
+		}
+	}
+	return results, nil
 }
 
 type mockQueryRepository struct {
@@ -318,6 +342,112 @@ func TestLinkService_GetAllKeywords(t *testing.T) {
 
 	if !keywordMap["github"] {
 		t.Error("LinkService.GetAllKeywords() missing 'github' keyword")
+	}
+}
+
+func TestLinkService_UpdateLink_NormalizesTags(t *testing.T) {
+	shortcutRepo := &mockShortcutRepository{shortcuts: map[string]*domain.Shortcut{}}
+	queryRepo := &mockQueryRepository{}
+	mockLogger := logger.New(logger.Config{Level: "error", Format: "text"})
+	service := NewLinkService(shortcutRepo, queryRepo, mockLogger)
+
+	req := domain.LinkRequest{
+		Word: "docs",
+		Link: "https://docs.example.com",
+		Tags: []string{"  Infra ", "infra", "", "Docs"},
+	}
+	if err := service.UpdateLink(context.Background(), req, "tester"); err != nil {
+		t.Fatalf("UpdateLink() error = %v", err)
+	}
+
+	got := shortcutRepo.shortcuts["docs"].Tags
+	want := []string{"infra", "docs"}
+	if len(got) != len(want) {
+		t.Fatalf("normalized tags = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("tag[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLinkService_Search(t *testing.T) {
+	shortcuts := map[string]*domain.Shortcut{
+		"docs": {ID: 1, Word: "docs", Link: "https://docs.example.com", Tags: []string{"infra"}},
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		limit        int
+		wantLimit    int
+		wantResults  int
+		wantDelegate bool
+	}{
+		{name: "empty query short-circuits", query: "  ", limit: 10, wantResults: 0, wantDelegate: false},
+		{name: "default limit applied", query: "docs", limit: 0, wantLimit: defaultSearchLimit, wantResults: 1, wantDelegate: true},
+		{name: "limit clamped to max", query: "docs", limit: 9999, wantLimit: maxSearchLimit, wantResults: 1, wantDelegate: true},
+		{name: "explicit limit preserved", query: "docs", limit: 5, wantLimit: 5, wantResults: 1, wantDelegate: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockShortcutRepository{shortcuts: shortcuts, lastSearchLimit: -1}
+			mockLogger := logger.New(logger.Config{Level: "error", Format: "text"})
+			service := NewLinkService(repo, &mockQueryRepository{}, mockLogger)
+
+			results, err := service.Search(context.Background(), tt.query, tt.limit)
+			if err != nil {
+				t.Fatalf("Search() error = %v", err)
+			}
+			if len(results) != tt.wantResults {
+				t.Errorf("Search() returned %d results, want %d", len(results), tt.wantResults)
+			}
+			if tt.wantDelegate && repo.lastSearchLimit != tt.wantLimit {
+				t.Errorf("Search() delegated limit = %d, want %d", repo.lastSearchLimit, tt.wantLimit)
+			}
+			if !tt.wantDelegate && repo.lastSearchLimit != -1 {
+				t.Errorf("Search() should not have hit the repository for an empty query")
+			}
+		})
+	}
+}
+
+func Test_normalizeTags(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"all empty", []string{"", "  "}, nil},
+		{"lowercase and trim", []string{" Foo ", "BAR"}, []string{"foo", "bar"}},
+		{"dedupe preserves first-seen order", []string{"a", "b", "a"}, []string{"a", "b"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeTags(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("normalizeTags(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Errorf("normalizeTags(%v)[%d] = %q, want %q", tt.in, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func Test_normalizeTags_CapsAtMax(t *testing.T) {
+	in := make([]string, maxTagsPerLink+5)
+	for i := range in {
+		in[i] = fmt.Sprintf("tag%d", i)
+	}
+	if got := normalizeTags(in); len(got) != maxTagsPerLink {
+		t.Errorf("normalizeTags capped at %d, want %d", len(got), maxTagsPerLink)
 	}
 }
 

@@ -115,6 +115,53 @@ func (r *ShortcutRepository) Create(ctx context.Context, shortcut *domain.Shortc
 	return nil
 }
 
+// DeleteByWord removes a keyword and everything tied to it — all of its
+// linktable revisions plus their dependent tag and query-log rows — in a single
+// transaction. It returns the number of linktable rows removed, so the caller
+// can distinguish a real delete from "nothing matched".
+func (r *ShortcutRepository) DeleteByWord(ctx context.Context, word string) (int64, error) {
+	start := time.Now()
+	r.logger.Debug("Deleting keyword: word='%s'", word)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		r.logger.Error("Failed to begin transaction: %v", err)
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// tags and queries reference linktable.id without ON DELETE CASCADE, so the
+	// dependents must go first or the foreign-key check (foreign_keys=on) rejects
+	// the linktable delete. The Postgres port could lean on cascades instead.
+	const subSelect = `SELECT id FROM linktable WHERE word = ?`
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tags WHERE word_id IN (`+subSelect+`)`, word); err != nil {
+		r.logger.Error("Failed to delete tags for word '%s': %v", word, err)
+		return 0, fmt.Errorf("failed to delete tags: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM queries WHERE word_id IN (`+subSelect+`)`, word); err != nil {
+		r.logger.Error("Failed to delete queries for word '%s': %v", word, err)
+		return 0, fmt.Errorf("failed to delete queries: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM linktable WHERE word = ?`, word)
+	if err != nil {
+		r.logger.Error("Failed to delete linktable rows for word '%s': %v", word, err)
+		return 0, fmt.Errorf("failed to delete shortcut: %w", err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read rows affected: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		r.logger.Error("Failed to commit transaction: %v", err)
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	r.logger.Info("Deleted keyword '%s': %d row(s) (%v)", word, removed, time.Since(start))
+	return removed, nil
+}
+
 // GetAllKeywords retrieves all keywords with their latest links and tags.
 func (r *ShortcutRepository) GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo, error) {
 	start := time.Now()

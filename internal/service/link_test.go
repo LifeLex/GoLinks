@@ -16,6 +16,7 @@ type mockShortcutRepository struct {
 	createErr       error
 	lastSearchQuery string
 	lastSearchLimit int
+	lastDeletedWord string
 }
 
 func (m *mockShortcutRepository) GetByWord(ctx context.Context, word string) (*domain.Shortcut, error) {
@@ -23,6 +24,15 @@ func (m *mockShortcutRepository) GetByWord(ctx context.Context, word string) (*d
 		return shortcut, nil
 	}
 	return nil, nil
+}
+
+func (m *mockShortcutRepository) DeleteByWord(_ context.Context, word string) (int64, error) {
+	m.lastDeletedWord = word
+	if _, ok := m.shortcuts[word]; ok {
+		delete(m.shortcuts, word)
+		return 1, nil
+	}
+	return 0, nil
 }
 
 func (m *mockShortcutRepository) Create(ctx context.Context, shortcut *domain.Shortcut) error {
@@ -412,6 +422,40 @@ func TestLinkService_Search(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLinkService_DeleteLink(t *testing.T) {
+	mockLogger := logger.New(logger.Config{Level: "error", Format: "text"})
+
+	t.Run("deletes existing word", func(t *testing.T) {
+		repo := &mockShortcutRepository{shortcuts: map[string]*domain.Shortcut{
+			"docs": {Word: "docs", Link: "https://docs.example.com"},
+		}}
+		svc := NewLinkService(repo, &mockQueryRepository{}, mockLogger)
+		if err := svc.DeleteLink(context.Background(), "docs", "tester"); err != nil {
+			t.Fatalf("DeleteLink() error = %v", err)
+		}
+		if repo.lastDeletedWord != "docs" {
+			t.Errorf("repo delete word = %q, want docs", repo.lastDeletedWord)
+		}
+	})
+
+	t.Run("missing word is idempotent (no error)", func(t *testing.T) {
+		repo := &mockShortcutRepository{shortcuts: map[string]*domain.Shortcut{}}
+		svc := NewLinkService(repo, &mockQueryRepository{}, mockLogger)
+		if err := svc.DeleteLink(context.Background(), "ghost", "tester"); err != nil {
+			t.Errorf("DeleteLink(missing) error = %v, want nil", err)
+		}
+	})
+
+	t.Run("empty word rejected", func(t *testing.T) {
+		repo := &mockShortcutRepository{shortcuts: map[string]*domain.Shortcut{}}
+		svc := NewLinkService(repo, &mockQueryRepository{}, mockLogger)
+		err := svc.DeleteLink(context.Background(), "  ", "tester")
+		if _, ok := err.(InvalidQueryError); !ok {
+			t.Errorf("DeleteLink(empty) error = %v, want InvalidQueryError", err)
+		}
+	})
 }
 
 func Test_normalizeTags(t *testing.T) {

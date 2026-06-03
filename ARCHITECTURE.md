@@ -152,7 +152,7 @@ There's also a `brokenHandler` that returns 503 with a helpful message if the em
 
 ## Authentication & authorization
 
-Email + password with server-side sessions. No JWT, no signing secret.
+Email + password with server-side sessions. No JWT, no signing secret. For a focused walkthrough of the session-cookie lifecycle (with sequence diagrams), see [`AUTH.md`](./AUTH.md).
 
 ### Storage
 - **`users`** — `(id, email, password_hash, role, created_at)`, with a `UNIQUE INDEX on lower(email)` for case-insensitive uniqueness. Passwords are bcrypt-hashed (`golang.org/x/crypto/bcrypt`, cost configurable).
@@ -330,20 +330,28 @@ The contract that justifies a server-side rendered handler. Browser search-engin
 - `recent_queries` ← `linkService.GetRecentQueries()` → top 20 by count over the last 3 days, joined back to `linktable` for the URL.
 - `base_url` ← `cfg.BaseURL`, used by the SPA to display the search-engine URL on the home and setup pages.
 
-### `POST /api/links` — create or update a link
+### `POST /api/links` — create or update a link [auth]
 
-`handler.go:CreateLink`. JSON body: `{"word":"...","link":"..."}`.
+`handler.go:CreateLink`. JSON body: `{"word":"...","link":"...","tags":[...]}`.
 
-1. Decode JSON; trim whitespace on both fields.
+1. Decode JSON; trim whitespace on `word`/`link`.
 2. Call `linkService.UpdateLink`, which validates:
    - Non-empty `word` and `link`.
    - `word` does not end in `/`.
    - `link` starts with `http://` or `https://`.
    - `link != word` (no self-loops).
-3. Insert a new row into `linktable`.
+3. Insert a new row into `linktable` (+ its tags) — the model is append-only, latest row per word wins.
 4. Return `{"success": true}` (200) or `400` with the validation message.
 
-### `POST /update/` — legacy form-encoded create
+### `PATCH /api/links/{word}` — edit a link [auth]
+
+`handler.go:UpdateLink`. Word comes from the path; JSON body carries `{"link":"...","tags":[...]}`. Runs the same validation and **appends a new revision** (no in-place mutation), so the latest row per word — with its tags — wins on resolve/list/search. Renaming the word is not supported here. `200` or `400`.
+
+### `DELETE /api/links/{word}` — delete a link [auth]
+
+`handler.go:DeleteLink` → `LinkService.DeleteLink` → `ShortcutRepository.DeleteByWord`. Transactionally removes **all** revisions of the word plus their dependent `tags` and `queries` rows (those FKs have no `ON DELETE CASCADE`, so dependents are deleted first). Idempotent — deleting a missing word still returns `200`. An empty word is `400`.
+
+### `POST /update/` — legacy form-encoded create [auth]
 
 `handler.go:UpdateLinkLegacy`. Same semantics as `POST /api/links`, but accepts `application/x-www-form-urlencoded` (`word=...&link=...`) and returns plain text `Link added successfully!`. Kept so anyone who configured their browser against the pre-migration `/update/` endpoint still works.
 
@@ -416,7 +424,7 @@ Loaded by `internal/config/config.go`. All env vars optional; defaults shown.
 - **Authentication is implemented** (resolved). `getUserID` reads the user from request context; `linktable.user` holds the author's email.
 - **No CSRF token** on writes. Mitigated by `SameSite=Lax` cookies + JSON-only bodies for the same-origin SPA; adequate for single-instance use. Add token-based CSRF before any cross-origin or multi-tenant public deployment.
 - **Email + password only.** No OAuth/SSO yet; the `AuthService` is structured so a provider can be added as an alternate login path.
-- **No account-level rate limiting** on `/auth/login`. Add brute-force protection (per-IP/account throttling) before public exposure.
+- **Login rate limiting** (resolved for single-instance). `POST /auth/login` and `/auth/setup` are throttled per client IP via an in-memory token bucket (`internal/ratelimit`, default burst 5, refill 5/min) → `429` when exceeded. Caveats: it uses `RemoteAddr` (behind a reverse proxy that's the proxy IP — honoring `X-Forwarded-For` is deferred until a trusted-proxy deployment exists), and it's process-local (a multi-instance deployment would need a shared/distributed limiter).
 
 ## Future / aspirational
 

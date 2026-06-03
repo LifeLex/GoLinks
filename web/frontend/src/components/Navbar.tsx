@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/auth/AuthContext";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const links = [
   { to: "/", label: "Index", end: true },
@@ -100,6 +101,7 @@ export function Navbar() {
           ))}
           <span className="mx-1 hidden h-4 w-px bg-background/20 sm:block" />
           <AuthCluster />
+          <ThemeToggle />
         </div>
       </div>
     </nav>

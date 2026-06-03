@@ -17,6 +17,7 @@ type ShortcutRepository interface {
 	Create(ctx context.Context, shortcut *domain.Shortcut) error
 	GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo, error)
 	Search(ctx context.Context, query string, limit int) ([]domain.KeywordInfo, error)
+	DeleteByWord(ctx context.Context, word string) (int64, error)
 }
 
 // QueryRepository interface for query operations
@@ -130,6 +131,26 @@ func (s *LinkService) UpdateLink(ctx context.Context, req domain.LinkRequest, us
 	}
 
 	s.logger.Info("Link update completed successfully: id=%d", shortcut.ID)
+	return nil
+}
+
+// DeleteLink removes a keyword and all of its revisions. Deletion is idempotent:
+// removing a keyword that doesn't exist is not an error. An empty word is
+// rejected as a bad request.
+func (s *LinkService) DeleteLink(ctx context.Context, word, userID string) error {
+	word = strings.TrimSpace(word)
+	if word == "" {
+		return InvalidQueryError{Message: "No word given, cannot delete a golink"}
+	}
+
+	s.logger.Info("Deleting link: word='%s' user='%s'", word, userID)
+	removed, err := s.shortcutRepo.DeleteByWord(ctx, word)
+	if err != nil {
+		s.logger.Error("Failed to delete link '%s': %v", word, err)
+		return fmt.Errorf("failed to delete link: %w", err)
+	}
+
+	s.logger.Debug("Delete '%s' removed %d row(s)", word, removed)
 	return nil
 }
 

@@ -52,6 +52,41 @@
 
     --radius: 0.25rem;                  /* 4px — Rams restraint */
   }
+
+  /* Dark instrument panel: ink base, warm paper text, same orange signal.
+     Applied when <html> carries the `dark` class (see ThemeToggle). */
+  .dark {
+    --background: 24 10% 10%;           /* dark ink */
+    --foreground: 40 16% 92%;           /* warm paper text */
+
+    --card: 24 9% 13%;
+    --card-foreground: 40 16% 92%;
+
+    --popover: 24 9% 13%;
+    --popover-foreground: 40 16% 92%;
+
+    --primary: 16 92% 54%;              /* orange, nudged brighter for dark */
+    --primary-foreground: 40 40% 98%;
+
+    --secondary: 24 8% 18%;
+    --secondary-foreground: 40 14% 88%;
+
+    --muted: 24 8% 16%;
+    --muted-foreground: 36 8% 60%;
+
+    --accent: 40 16% 90%;
+    --accent-foreground: 24 10% 10%;
+
+    --destructive: 6 72% 55%;
+    --destructive-foreground: 40 40% 98%;
+
+    --success: 150 40% 45%;
+    --success-foreground: 40 40% 98%;
+
+    --border: 30 6% 24%;
+    --input: 30 6% 30%;
+    --ring: 16 92% 54%;
+  }
 }
 
 @layer base {

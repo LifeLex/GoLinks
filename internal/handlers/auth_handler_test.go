@@ -111,6 +111,23 @@ func TestAuthHandler_Setup_RegistrationClosed(t *testing.T) {
 	}
 }
 
+type denyLimiter struct{}
+
+func (denyLimiter) Allow(string) bool { return false }
+
+func TestAuthHandler_Login_RateLimited(t *testing.T) {
+	h := testAuthHandler(&mockAuthService{loginUser: &domain.User{Email: "u@x.com"}, loginToken: "abc"})
+	h.loginLimiter = denyLimiter{} // simulate exhausted limit
+
+	req := httptest.NewRequest("POST", "/auth/login", strings.NewReader(`{"email":"u@x.com","password":"password123"}`))
+	w := httptest.NewRecorder()
+	h.Login(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429", w.Code)
+	}
+}
+
 func TestAuthHandler_Login(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		h := testAuthHandler(&mockAuthService{loginUser: &domain.User{Email: "u@x.com"}, loginToken: "abc"})

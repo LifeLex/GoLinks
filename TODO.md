@@ -25,7 +25,7 @@ The highest-leverage foundation: it makes the tool browsable past ~50 links, act
 
 ### Admin & management UI
 
-- [ ] **Edit & delete UI for golinks.** Today the homepage only adds. Add row-level edit and delete actions in `web/frontend/src/components/KeywordTable.tsx`. Backend: `PATCH /api/links/{word}` and `DELETE /api/links/{word}`. _Depends on authorization (admin-only)._
+- [x] **Edit & delete UI for golinks.** Row-level edit (target + tags) and delete actions in `KeywordTable.tsx` (gated on auth, shown to any logged-in user — consistent with create). Backend: `PATCH /api/links/{word}` (appends a new revision — latest per word wins) and `DELETE /api/links/{word}` (transactional delete of the word's rows + dependent tags/queries; idempotent), both on the `authed` subrouter. _Rename is not yet supported (edit changes target/tags only); it'd need delete+recreate._
 - [ ] **Keyword-request workflow.** Non-admins propose new golinks; admins approve or reject. Add a `status` column to `linktable` (`proposed`/`approved`/`rejected`) or a `link_requests` table that promotes on approval. New API endpoints; new admin view in the SPA. _Depends on authorization._
 
 ### First-run experience
@@ -40,9 +40,9 @@ The highest-leverage foundation: it makes the tool browsable past ~50 links, act
 
 ### Project hygiene
 
-- [ ] **Versioned migrations.** Switch from the inline string slice in `internal/database/sqlite.go:Migrate` to `goose` (or `golang-migrate`). Matters once auth tables + FTS5 + analytics land.
-- [ ] **Dark mode.** shadcn theming is already token-driven — add a `.dark` block in `web/frontend/src/index.css` overriding the HSL variables. Toggle in the navbar; persist in `localStorage`; respect `prefers-color-scheme` on first visit.
-- [ ] **Hardening + CI polish + contributor docs.** Rate-limit writes, CONTRIBUTING.md, issue/PR templates — the table-stakes for an OSS release.
+- [ ] **Versioned migrations.** Switch from the inline string slice in `internal/database/sqlite.go:Migrate` to `goose` (or `golang-migrate`). Matters once auth tables + analytics land.
+- [x] **Dark mode.** `.dark` token block in `index.css`; `ThemeToggle` in the navbar persists to `localStorage`; an inline script in `index.html` sets the class pre-paint (respects `prefers-color-scheme` on first visit). _Note: the navbar uses `bg-foreground`, so it inverts with the theme — tweak if an always-dark bar is preferred. The `highlight.js` code theme is still the light GitHub theme in dark mode (follow-up)._
+- [x] **Contributor docs + login rate-limiting.** `CONTRIBUTING.md`, `.github` issue/PR templates, and per-IP login throttling (`internal/ratelimit`, 429 on `/auth/login` + `/auth/setup`). _Remaining hardening: write rate-limiting beyond login._
 
 ---
 

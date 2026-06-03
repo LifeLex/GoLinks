@@ -304,6 +304,54 @@ func TestShortcutRepository_Search(t *testing.T) {
 	}
 }
 
+func TestShortcutRepository_DeleteByWord(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	repo := NewShortcutRepository(db, logger.New(logger.Config{Level: "error", Format: "text"}))
+	queryRepo := NewQueryRepository(db, logger.New(logger.Config{Level: "error", Format: "text"}))
+	ctx := context.Background()
+
+	// Two revisions of "docs" (with tags + a query-log hit), plus an unrelated "gh".
+	for _, sc := range []*domain.Shortcut{
+		{Word: "docs", Link: "https://docs.example.com", User: "u", Tags: []string{"infra"}},
+		{Word: "docs", Link: "https://docs.example.com/v2", User: "u", Tags: []string{"infra", "wiki"}},
+		{Word: "gh", Link: "https://github.com", User: "u", Tags: []string{"code"}},
+	} {
+		if err := repo.Create(ctx, sc); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+	// Log a query hit against the latest docs revision so we exercise the
+	// dependent-row cleanup (queries has no ON DELETE CASCADE).
+	docs, _ := repo.GetByWord(ctx, "docs")
+	if err := queryRepo.Create(ctx, docs.ID); err != nil {
+		t.Fatalf("query Create() error = %v", err)
+	}
+
+	removed, err := repo.DeleteByWord(ctx, "docs")
+	if err != nil {
+		t.Fatalf("DeleteByWord() error = %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2 (both revisions)", removed)
+	}
+
+	// "docs" is gone; "gh" survives.
+	keywords, err := repo.GetAllKeywords(ctx)
+	if err != nil {
+		t.Fatalf("GetAllKeywords() error = %v", err)
+	}
+	if len(keywords) != 1 || keywords[0].Word != "gh" {
+		t.Errorf("after delete, keywords = %v, want only [gh]", wordsOf(keywords))
+	}
+
+	// Deleting again removes nothing (idempotent at the repo level).
+	if removed, _ := repo.DeleteByWord(ctx, "docs"); removed != 0 {
+		t.Errorf("second delete removed = %d, want 0", removed)
+	}
+}
+
 func wordsOf(keywords []domain.KeywordInfo) []string {
 	out := make([]string, len(keywords))
 	for i, k := range keywords {

@@ -75,7 +75,9 @@ GoLinks uses email + password authentication with server-side sessions (an `Http
 
 - **First run:** on a fresh database the app shows a one-time setup wizard at `/welcome`. The first account you create becomes the **admin**.
 - **Adding users:** registration is closed after the first user. Admins add accounts from **Users** (`/admin/users`), choosing the `admin` or `user` role.
-- **What's public vs. gated:** resolving golinks (`/query/...`) and browsing/searching the index stay public. Creating or editing links requires signing in; uploading or deleting docs requires an admin (runtime MDX runs in the browser, so this is locked down).
+- **What's public vs. gated:** resolving golinks (`/query/...`) and browsing/searching the index stay public. Creating, editing, or deleting links requires signing in; uploading or deleting docs requires an admin (runtime MDX runs in the browser, so this is locked down).
+
+For how sessions and the auth cookie work under the hood, see [`AUTH.md`](./AUTH.md).
 
 ## Development
 

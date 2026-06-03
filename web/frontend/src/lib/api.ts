@@ -108,6 +108,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  updateLink: (word: string, input: { link: string; tags?: string[] }) =>
+    request<{ success: true }>(`/api/links/${encodeURIComponent(word)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deleteLink: (word: string) =>
+    request<{ success: true }>(`/api/links/${encodeURIComponent(word)}`, {
+      method: "DELETE",
+    }),
   search: (query: string, limit?: number) => {
     const params = new URLSearchParams({ q: query });
     if (limit) params.set("limit", String(limit));

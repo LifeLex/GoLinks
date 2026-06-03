@@ -193,7 +193,7 @@ export function HomePage() {
               </p>
             </div>
           ) : (
-            <KeywordTable keywords={displayedKeywords} onTagClick={setQuery} />
+            <KeywordTable keywords={displayedKeywords} onTagClick={setQuery} editable={isAuthenticated} />
           )}
         </section>
 

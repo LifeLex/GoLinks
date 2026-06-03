@@ -18,16 +18,18 @@ import (
 )
 
 type mockLinkService struct {
-	links          map[string]string
-	recentQueries  []domain.PopularQuery
-	allKeywords    []domain.KeywordInfo
-	searchResults  []domain.KeywordInfo
-	searchError    error
-	updateError    error
-	getError       error
-	lastSearchQ    string
-	lastSearchLim  int
-	lastUpdateUser string
+	links           map[string]string
+	recentQueries   []domain.PopularQuery
+	allKeywords     []domain.KeywordInfo
+	searchResults   []domain.KeywordInfo
+	searchError     error
+	updateError     error
+	getError        error
+	lastSearchQ     string
+	lastSearchLim   int
+	lastUpdateUser  string
+	deleteError     error
+	lastDeletedWord string
 }
 
 func (m *mockLinkService) GetLink(_ context.Context, word string, _ string) (string, error) {
@@ -64,6 +66,15 @@ func (m *mockLinkService) Search(_ context.Context, query string, limit int) ([]
 		return nil, m.searchError
 	}
 	return m.searchResults, nil
+}
+
+func (m *mockLinkService) DeleteLink(_ context.Context, word, _ string) error {
+	if m.deleteError != nil {
+		return m.deleteError
+	}
+	m.lastDeletedWord = word
+	delete(m.links, word)
+	return nil
 }
 
 func setupTestHandler() *Handler {
@@ -267,6 +278,44 @@ func TestSearchLinks_BadLimit(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %v, want 400", w.Code)
+	}
+}
+
+func TestUpdateLinkHandler(t *testing.T) {
+	handler := setupTestHandler()
+	router := mux.NewRouter()
+	authed := router.NewRoute().Subrouter()
+	handler.RegisterRoutes(router, authed)
+
+	req := httptest.NewRequest("PATCH", "/api/links/docs", strings.NewReader(`{"link":"https://new.example.com","tags":["x"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%q", w.Code, w.Body.String())
+	}
+	mock := handler.linkService.(*mockLinkService)
+	if mock.links["docs"] != "https://new.example.com" {
+		t.Errorf("link not updated: %q", mock.links["docs"])
+	}
+}
+
+func TestDeleteLinkHandler(t *testing.T) {
+	handler := setupTestHandler()
+	router := mux.NewRouter()
+	authed := router.NewRoute().Subrouter()
+	handler.RegisterRoutes(router, authed)
+
+	req := httptest.NewRequest("DELETE", "/api/links/docs", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%q", w.Code, w.Body.String())
+	}
+	if mock := handler.linkService.(*mockLinkService); mock.lastDeletedWord != "docs" {
+		t.Errorf("deleted word = %q, want docs", mock.lastDeletedWord)
 	}
 }
 

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 
 	"golinks/internal/config"
 	"golinks/internal/domain"
 	"golinks/internal/logger"
+	"golinks/internal/ratelimit"
 
 	"github.com/gorilla/mux"
 )
@@ -29,17 +31,29 @@ type AuthService interface {
 	DeleteUser(ctx context.Context, id int) error
 }
 
-// AuthHandler owns the /auth/* and /api/users endpoints.
-type AuthHandler struct {
-	auth   AuthService
-	config *config.Config
-	logger *logger.Logger
+// rateLimiter is the subset of *ratelimit.Limiter the handler needs.
+type rateLimiter interface {
+	Allow(key string) bool
 }
 
-// NewAuthHandler builds a new auth handler.
+// AuthHandler owns the /auth/* and /api/users endpoints.
+type AuthHandler struct {
+	auth         AuthService
+	config       *config.Config
+	logger       *logger.Logger
+	loginLimiter rateLimiter
+}
+
+// NewAuthHandler builds a new auth handler. Credential endpoints are rate-limited
+// per client IP: a burst of 5 attempts, refilling 5/minute.
 func NewAuthHandler(auth AuthService, cfg *config.Config, log *logger.Logger) *AuthHandler {
 	log.Info("Auth handler initialized")
-	return &AuthHandler{auth: auth, config: cfg, logger: log}
+	return &AuthHandler{
+		auth:         auth,
+		config:       cfg,
+		logger:       log,
+		loginLimiter: ratelimit.New(5, 5),
+	}
 }
 
 // RegisterRoutes wires auth endpoints. Public auth endpoints go on public; user
@@ -83,6 +97,9 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 
 // Setup creates the first (admin) user on a fresh instance and logs them in.
 func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
+	if h.rateLimited(w, r) {
+		return
+	}
 	var req domain.LoginRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -98,6 +115,9 @@ func (h *AuthHandler) Setup(w http.ResponseWriter, r *http.Request) {
 
 // Login verifies credentials and opens a session.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	if h.rateLimited(w, r) {
+		return
+	}
 	var req domain.LoginRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -203,6 +223,31 @@ func (h *AuthHandler) clearSessionCookie(w http.ResponseWriter) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
+}
+
+// rateLimited reports whether the request exceeded the per-IP credential-attempt
+// limit, writing a 429 if so. Returns false (allowed) when no limiter is set.
+func (h *AuthHandler) rateLimited(w http.ResponseWriter, r *http.Request) bool {
+	if h.loginLimiter == nil {
+		return false
+	}
+	if h.loginLimiter.Allow(clientIP(r)) {
+		return false
+	}
+	h.logger.Warn("Rate-limited credential attempt from %s", clientIP(r))
+	http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
+	return true
+}
+
+// clientIP extracts the client IP from RemoteAddr. Behind a reverse proxy this
+// is the proxy's address; honoring X-Forwarded-For would require trusting the
+// proxy and is deferred until a proxied deployment exists.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // decodeJSON decodes a JSON request body, writing a 400 and returning false on

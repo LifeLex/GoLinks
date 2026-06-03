@@ -23,6 +23,7 @@ type LinkService interface {
 	GetRecentQueries(ctx context.Context) ([]domain.PopularQuery, error)
 	GetAllKeywords(ctx context.Context) ([]domain.KeywordInfo, error)
 	Search(ctx context.Context, query string, limit int) ([]domain.KeywordInfo, error)
+	DeleteLink(ctx context.Context, word, userID string) error
 }
 
 // Handler owns the redirect + JSON endpoints for links.
@@ -61,6 +62,8 @@ func (h *Handler) RegisterRoutes(public, authed *mux.Router) {
 
 	// Authenticated writes.
 	authed.HandleFunc("/api/links", h.CreateLink).Methods("POST")
+	authed.HandleFunc("/api/links/{word}", h.UpdateLink).Methods("PATCH")
+	authed.HandleFunc("/api/links/{word}", h.DeleteLink).Methods("DELETE")
 
 	// Legacy form-encoded create. Now requires auth — closing the old
 	// unauthenticated write path. An authenticated admin's browser keyword POST
@@ -115,8 +118,9 @@ func (h *Handler) ListLinks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"keywords":       keywords,
-		"recent_queries": recent,
+		// Coalesce to empty slices so JSON emits [] (not null) when there's no data.
+		"keywords":       orEmptyKeywords(keywords),
+		"recent_queries": orEmptyQueries(recent),
 		"base_url":       h.config.BaseURL,
 	})
 }
@@ -144,7 +148,7 @@ func (h *Handler) SearchLinks(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"query":   q,
-		"results": results,
+		"results": orEmptyKeywords(results),
 	})
 }
 
@@ -173,6 +177,58 @@ func (h *Handler) CreateLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
+// UpdateLink edits an existing keyword's target and tags. The word comes from
+// the path; the body carries the new link + tags. Editing appends a new
+// revision (the latest row per word wins), matching create semantics.
+func (h *Handler) UpdateLink(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Link string   `json:"link"`
+		Tags []string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	req := domain.LinkRequest{
+		Word: strings.TrimSpace(mux.Vars(r)["word"]),
+		Link: strings.TrimSpace(body.Link),
+		Tags: body.Tags,
+	}
+
+	if err := h.linkService.UpdateLink(r.Context(), req, h.getUserID(r)); err != nil {
+		if _, ok := err.(service.InvalidQueryError); ok {
+			h.logger.Warn("Invalid link update word='%s': %v", req.Word, err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		h.logger.Error("Failed to update link word='%s': %v", req.Word, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("Link updated: word='%s' link='%s'", req.Word, req.Link)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// DeleteLink removes a keyword and all of its revisions. Idempotent.
+func (h *Handler) DeleteLink(w http.ResponseWriter, r *http.Request) {
+	word := strings.TrimSpace(mux.Vars(r)["word"])
+
+	if err := h.linkService.DeleteLink(r.Context(), word, h.getUserID(r)); err != nil {
+		if _, ok := err.(service.InvalidQueryError); ok {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		h.logger.Error("Failed to delete link word='%s': %v", word, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("Link deleted: word='%s'", word)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
 // UpdateLinkLegacy preserves the old /update/ form endpoint so browser search
 // engines that still POST form-encoded data keep working.
 func (h *Handler) UpdateLinkLegacy(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +250,22 @@ func (h *Handler) UpdateLinkLegacy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	_, _ = w.Write([]byte("Link added successfully!"))
+}
+
+// orEmptyKeywords returns a non-nil slice so JSON serializes [] instead of null.
+func orEmptyKeywords(in []domain.KeywordInfo) []domain.KeywordInfo {
+	if in == nil {
+		return []domain.KeywordInfo{}
+	}
+	return in
+}
+
+// orEmptyQueries returns a non-nil slice so JSON serializes [] instead of null.
+func orEmptyQueries(in []domain.PopularQuery) []domain.PopularQuery {
+	if in == nil {
+		return []domain.PopularQuery{}
+	}
+	return in
 }
 
 // getUserID returns the authenticated user's email, or "" when anonymous. Write
